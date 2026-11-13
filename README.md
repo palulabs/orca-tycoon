@@ -61,6 +61,30 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
 
 A status line along the top counts teams, staff, busy agents and how many need you.
 
+## Two looks
+
+The switch in the top right corner picks how the office looks, and the panel remembers it.
+
+- **Brick** is the flat office seen from straight above, as in the screenshots above.
+- **Loft** shows the office from the front and above, like a doll's house with its front wall
+  taken off. It is set up like a real office in an old concrete hall: tall steel windows onto a garden
+  at the far end, each team in a room closed off by navy curtains, and the hangout in the middle with
+  phone booths, a coffee counter, a sofa on a pink rug, foosball and a high table.
+
+![The loft: four teams at islands of six desks behind navy curtains, and the hangout in the middle with phone booths, a coffee counter, a sofa on a pink rug, foosball and Palú asleep in his bed](docs/loft.png)
+
+In the loft, every worktree of a project owns a desk, also while it sleeps: then its chair stays
+empty and its nameplate is dimmed. A project shows up as soon as one of its worktrees has a live
+agent. Desks stand in islands of six that stay put while seats empty and fill; a project with three
+worktrees or fewer gets half an island, one row of three, and two such projects share a room, each
+island under its project's name. The front row sits with their backs to you, their screens facing you
+and the nameplate on the back of the chair. The back row faces you over their monitors, the nameplate
+on the back of the monitor below a status light. A desk keeps its place until its worktree goes,
+nobody moves up, and a new worktree takes the first free desk, beside its parent when that one is
+free. Specialists sit on an orange stool right beside their agent, two at most, with a `+` for more.
+The loft's hangout adds one thing to do on a break: a chat at the round white table, two or more
+round it taking turns to talk, never one alone.
+
 ## Reading the monitors
 
 ![One desk per state on a narrow panel: a red flashing exclamation mark, an amber question mark and typing at their desks, while the done agent naps on the sofa and the monitoring one takes a call in a booth](docs/states.png)
@@ -96,7 +120,7 @@ subagents. To see the whole office, the worker (`src/worker.ts`) runs `orca work
 instead. Orca's own sidebar and phone app draw from the same rows. The worker trims them to a small
 office model (`src/protocol.ts`): projects, seats, and each seat's specialists.
 
-The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`) polls the worker every 3 seconds,
+The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`, and `src/loft.js` for the loft) polls the worker every 3 seconds,
 the same rate Orca's phone app uses, and draws one canvas at 8 frames a second. Every sprite is
 drawn in code, so the plugin loads no assets and makes no network requests. The office fills the
 panel: it is drawn at the biggest whole pixel scale at which the whole building fits, and the
@@ -112,7 +136,7 @@ asks for no other capabilities.
 
 ```sh
 orca plugin validate .
-orca plugin test .            # src/worker.test.ts: ps rows to the office model
+orca plugin test .            # ps rows to the office model, and the loft's seats and floor plan
 orca plugin dev reload .      # after editing; the panel redraws
 orca plugin shot local.office-tycoon --panel office --out shot.png
 ```

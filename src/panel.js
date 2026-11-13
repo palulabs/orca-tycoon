@@ -44,6 +44,7 @@ import {
   whiteboard,
   workstation
 } from './sprites.js'
+import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing } from './loft.js'
 
 const POLL_MS = 3000
 const FRAME_MS = 125
@@ -70,6 +71,7 @@ const WALK_SPEED = 1.5 // art pixels per frame
 // building still fits the panel, so it fills a tall or wide panel instead of stopping at its own
 // height; it never drops below the width's minimum, so a crowded office scrolls as before.
 const MAX_SCALE = 8
+const SCROLLBAR = 16 // CSS pixels a vertical scrollbar can take from the panel's width
 const MIN_ART_W = MIN_ROOM_W + (OUTER + MARGIN) * 2 // narrower than this and not even the smallest room fits
 const MAX_CORRIDOR = GAP * 4 // the corridors between rooms widen to reach the panel's bottom, up to this
 // States in which an agent leaves its desk for the coffee corner until the state ends.
@@ -84,7 +86,9 @@ const ACTIVITIES = [
   { id: 'read', kind: 'lounge', pose: 'read', weight: 1.5 },
   { id: 'coffee', kind: 'coffee', weight: 2 },
   { id: 'foosball', kind: 'foosball', weight: 3 },
-  { id: 'call', kind: 'booth', weight: 2 }
+  { id: 'call', kind: 'booth', weight: 2 },
+  // a chat at the round table: only the loft has one
+  { id: 'chat', kind: 'table', weight: 2 }
 ]
 const ACTIVITY_MS = 60000
 // States in which an agent goes and naps on the lounge sofa, while there are seats.
@@ -107,6 +111,21 @@ const canvas = document.getElementById('plan')
 const ctx = canvas.getContext('2d')
 const tooltip = document.getElementById('tooltip')
 const dpr = () => window.devicePixelRatio || 1
+
+// Two looks: Brick, the original flat office seen from straight above, and Loft, seen from the
+// front and above with the real office's curtained rooms and desk islands. The choice is kept.
+const THEMES = ['brick', 'loft']
+const THEME_KEY = 'office-tycoon.theme'
+const RENAMED = { classic: 'brick', dollhouse: 'loft' } // what the looks were called before
+let theme = 'brick'
+try {
+  const saved = localStorage.getItem(THEME_KEY)
+  const name = RENAMED[saved] ?? saved
+  if (THEMES.includes(name)) theme = name
+} catch {
+  // no storage in this frame: start on Brick every time
+}
+const loft = () => theme === 'loft'
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
@@ -178,7 +197,8 @@ function segmentW(seat) {
 /** Splits families into tables no wider than the room, then packs tables into lines. */
 function planRoom(floor, innerW) {
   const tables = []
-  for (const family of families(floor.desks)) {
+  // Brick seats agents only: a sleeping worktree has no desk here, nor ties its children together
+  for (const family of families(floor.desks.filter((d) => d.staff.length > 0))) {
     let table = []
     let width = 0
     for (const seat of familySeats(family)) {
@@ -364,6 +384,7 @@ function fitLayout() {
   const cssW = Math.max(180, Math.floor(box.width))
   const cssH = Math.floor(box.height)
   const perPx = Number.isInteger(dpr()) ? dpr() : 1 // scale steps per CSS pixel
+  if (loft()) return fitLoft(cssW, cssH, perPx)
   const minScale = cssW >= 300 ? 3 : 2
   // The building at this scale, stretched to the panel's bottom; null when it is too tall as it is.
   const fill = (scale) => {
@@ -384,6 +405,24 @@ function fitLayout() {
     if (filled) return filled
   }
   return fill(minScale) ?? computeLayout(cssW, minScale)
+}
+
+/** The loft at the biggest scale at which it fits, its floor stretched to the panel's bottom. */
+function fitLoft(cssW, cssH, perPx) {
+  const helpers = { families, familySeats, activeSpecialists }
+  const minScale = 2
+  for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
+    const scale = n / perPx
+    if (Math.floor(cssW / scale) < LOFT_MIN_W && scale > minScale) continue
+    const fit = layoutLoft(snapshot, cssW, scale, helpers)
+    const rows = Math.floor(cssH / scale)
+    if (fit.artH <= rows) {
+      fit.artH = fit.building.h = rows
+      return fit
+    }
+  }
+  // too tall for the panel at any scale: it scrolls, so leave room for the scrollbar across
+  return layoutLoft(snapshot, cssW - SCROLLBAR, minScale, helpers)
 }
 
 function resize() {
@@ -538,6 +577,7 @@ function drawCommon() {
 
 /** Where an agent stands when it gets up: the aisle in front of its seat. */
 function homeOf(seat) {
+  if (loft()) return loftGeometry.homeOf(seat)
   return { x: seat.x + 6, y: seat.y + SEAT_H + LABEL_H - 4 }
 }
 
@@ -573,12 +613,12 @@ function slotOf(key, now) {
 /** The spot for every agent on a break; full places pass on, nobody plays foosball alone. */
 function assignBreaks(common) {
   const now = Date.now()
-  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths }
+  const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths, table: common.table ?? [] }
   const onBreak = layout.seats.filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
   const onKeys = new Set(onBreak.map((s) => s.key))
   for (const key of assigned.keys()) if (!onKeys.has(key)) assigned.delete(key)
 
-  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set() }
+  const taken = { lounge: new Set(), coffee: new Set(), foosball: new Set(), booth: new Set(), table: new Set() }
   const pending = []
   for (const seat of onBreak) {
     const slot = slotOf(seat.key, now)
@@ -596,9 +636,9 @@ function assignBreaks(common) {
       .map((a, i) => ({ a, score: -Math.log(1e-9 + hashOf(`${seat.key}|${slot}|${i}`)) / a.weight }))
       .sort((x, y) => x.score - y.score)
       .map((r) => r.a)
-  const place = (p, skip) => {
+  const place = (p, skip = []) => {
     for (const a of ranked(p)) {
-      if (a.kind === skip) continue
+      if (skip.includes(a.kind)) continue
       const index = pools[a.kind].findIndex((_, i) => !taken[a.kind].has(i))
       if (index >= 0) {
         taken[a.kind].add(index)
@@ -608,15 +648,18 @@ function assignBreaks(common) {
     }
   }
   pending.sort((x, y) => hashOf(`${x.seat.key}|${x.slot}|turn`) - hashOf(`${y.seat.key}|${y.slot}|turn`))
-  for (const p of pending) place(p, null)
-  // Nobody plays foosball alone: a lone player picks something else.
-  const players = [...assigned].filter(([, e]) => e.kind === 'foosball')
-  if (players.length === 1) {
+  for (const p of pending) place(p)
+  // Nobody plays foosball alone, and nobody chats alone: a lone one picks something else.
+  // Re-placed away from both, so nobody bounces from one lonely game into the other.
+  const TOGETHER = ['foosball', 'table']
+  for (const kind of TOGETHER) {
+    const players = [...assigned].filter(([, e]) => e.kind === kind)
+    if (players.length !== 1) continue
     const [key, e] = players[0]
     assigned.delete(key)
-    taken.foosball.delete(e.index)
+    taken[kind].delete(e.index)
     const seat = onBreak.find((s) => s.key === key)
-    place({ seat, slot: e.slot, sleepy: LOUNGE_STATES.has(seat.staff.state) }, 'foosball')
+    place({ seat, slot: e.slot, sleepy: LOUNGE_STATES.has(seat.staff.state) }, TOGETHER)
   }
 
   activityOf.clear()
@@ -665,15 +708,8 @@ function stepWalkers() {
     const next = w.path[0]
     if (next) {
       const dx = next.x - w.x
-      const dy = next.y - w.y
-      w.left = dx < 0 ? true : dx > 0 ? false : w.left
-      w.x += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dx))
-      w.y += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dy))
-      if (Math.abs(next.x - w.x) < 0.5 && Math.abs(next.y - w.y) < 0.5) {
-        w.x = next.x
-        w.y = next.y
-        w.path.shift()
-      }
+      w.left = dx < -0.5 ? true : dx > 0.5 ? false : w.left
+      if (stepToward(w, next, WALK_SPEED)) w.path.shift()
     } else if (w.mode === 'out') {
       w.mode = 'away'
       w.left = w.spot.left ?? false
@@ -689,6 +725,7 @@ const DOOR_LANE_X = OUTER + 1
 
 /** Where a specialist waits in the aisle before stepping onto the stool, and the stool itself. */
 function stoolStops(seat, stoolAt) {
+  if (loft()) return loftGeometry.stoolStops(seat, stoolAt)
   return { aisle: { x: stoolAt.x - 1, y: seat.y + SEAT_H + LABEL_H - 8 }, on: { x: stoolAt.x - 1, y: seat.y + 6 } }
 }
 
@@ -713,7 +750,7 @@ function stepVisitors() {
   const wanted = new Map()
   for (const seat of layout.seats) {
     activeSpecialists(seat.staff)
-      .slice(0, MAX_STOOLS)
+      .slice(0, Math.min(MAX_STOOLS, seat.stools.length))
       .forEach((spec, i) => wanted.set(`${seat.key}|${spec.id}`, { seat, spec, stoolAt: seat.stools[i] }))
   }
   for (const [key, { seat, spec, stoolAt }] of wanted) {
@@ -756,15 +793,8 @@ function stepVisitors() {
     const next = v.path[0]
     if (next) {
       const dx = next.x - v.x
-      const dy = next.y - v.y
-      v.left = dx < 0 ? true : dx > 0 ? false : v.left
-      v.x += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dx))
-      v.y += Math.max(-WALK_SPEED, Math.min(WALK_SPEED, dy))
-      if (Math.abs(next.x - v.x) < 0.5 && Math.abs(next.y - v.y) < 0.5) {
-        v.x = next.x
-        v.y = next.y
-        v.path.shift()
-      }
+      v.left = dx < -0.5 ? true : dx > 0.5 ? false : v.left
+      if (stepToward(v, next, WALK_SPEED)) v.path.shift()
     } else if (v.mode === 'in') v.mode = 'seated'
     else if (v.mode === 'out') {
       visitors.delete(key)
@@ -791,6 +821,7 @@ function paluBedSpot() {
 
 /** Where he lies when visiting a desk: on the floor in front of it, below the nameplate. */
 function paluDeskSpot(seat) {
+  if (loft()) return loftGeometry.paluDeskSpot(seat)
   return { x: seat.x + 1, y: seat.y + SEAT_H + LABEL_H }
 }
 
@@ -817,6 +848,7 @@ const FEET = {
 
 /** The floor each obstacle stands on: [x, y, w, h], in art pixels. */
 function floorObstacles(who) {
+  if (loft()) return loftGeometry.obstacles(layout)
   const c = layout.common
   // a person in the aisle stands tall, feet level with the heads of the next row down: for them
   // a desk starts a little lower
@@ -858,6 +890,10 @@ function floorClear(box, blocks) {
  * furniture. Each is where he stands, side-on, with his nose just touching the thing.
  */
 function paluSniffSpots() {
+  if (loft()) {
+    const blocks = floorObstacles('palu')
+    return loftGeometry.sniffSpots(layout).filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
+  }
   const c = layout.common
   // nose to the left of him touching x (facing left), or to the right (facing right); paws on row y
   const fromRight = (x, base) => ({ x, y: base - 9, left: true })
@@ -884,16 +920,18 @@ function paluSniffSpots() {
   return spots.filter((s) => floorClear(FEET.palu.side(s.x, s.y), blocks))
 }
 
-const grids = new WeakMap() // layout -> where Palú's and people's feet may go, side-on and upright
+const grids = new Map() // floor geometry -> where Palú's and people's feet may go, side-on and upright
 
+/** The grid for the floor as it is; a poll that moved nothing finds the one it already built. */
 function floorGrid(who) {
-  let mine = grids.get(layout)
-  if (!mine) grids.set(layout, (mine = {}))
-  if (mine[who]) return mine[who]
+  const blocks = floorObstacles(who)
+  const key = `${who}|${layout.artW}|${layout.building.h}|${JSON.stringify(blocks)}`
+  const known = grids.get(key)
+  if (known) return known
+  if (grids.size > 8) grids.clear()
   const G = GRID
   const W = Math.ceil(layout.artW / G)
   const H = Math.ceil(layout.building.h / G)
-  const blocks = floorObstacles(who)
   const feet = FEET[who]
   const side = new Uint8Array(W * H)
   const upright = new Uint8Array(W * H)
@@ -903,7 +941,9 @@ function floorGrid(who) {
       upright[gy * W + gx] = floorClear(feet.upright(gx * G, gy * G), blocks) ? 1 : 0
     }
   }
-  return (mine[who] = { W, H, side, upright })
+  const grid = { W, H, side, upright }
+  grids.set(key, grid)
+  return grid
 }
 
 /** Waypoints from `from` to `to`, around everything in the way. */
@@ -977,21 +1017,52 @@ function floorRoute(from, to, who) {
     }
   }
   if (end < 0) return null
-  // walk back, keeping only the corners
   const cells = []
   for (let node = end; node >= 0; node = prev[node]) cells.push(node >> 2)
   cells.reverse()
-  const points = cells.map((cell) => ({ x: (cell % W) * G, y: Math.floor(cell / W) * G }))
-  // from the nearest cell, so the first leg runs along a row that is clear
-  const corners = [points[0]]
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]
-    const b = points[i]
-    const n = points[i + 1]
-    if (!n || (a.x === b.x) !== (b.x === n.x)) corners.push(b)
+  // Pull the route straight: from each corner, head for the farthest cell further on that can be
+  // reached in a straight line over open floor. People cut across the room and go round things,
+  // instead of walking the grid's right angles.
+  const open = (cell) => side[cell] && upright[cell]
+  const inSight = (a, b) => {
+    const ax = a % W
+    const ay = Math.floor(a / W)
+    const dx = (b % W) - ax
+    const dy = Math.floor(b / W) - ay
+    const steps = Math.max(Math.abs(dx), Math.abs(dy)) * 2
+    for (let i = 1; i < steps; i++) {
+      const cx = Math.round(ax + (dx * i) / steps)
+      const cy = Math.round(ay + (dy * i) / steps)
+      if (!open(cy * W + cx)) return false
+    }
+    return true
   }
+  const kept = [cells[0]]
+  for (let i = 0; i < cells.length - 1; ) {
+    // looking at most 64 cells ahead keeps a long route along furniture cheap
+    let j = Math.min(cells.length - 1, i + 64)
+    while (j > i + 1 && !inSight(cells[i], cells[j])) j--
+    kept.push(cells[j])
+    i = j
+  }
+  const corners = kept.map((cell) => ({ x: (cell % W) * G, y: Math.floor(cell / W) * G }))
   corners.push({ x: to.x, y: to.y })
   return corners
+}
+
+/** One frame's step toward `next` along a straight line; true when it got there. */
+function stepToward(who, next, speed) {
+  const dx = next.x - who.x
+  const dy = next.y - who.y
+  const d = Math.hypot(dx, dy)
+  if (d <= speed) {
+    who.x = next.x
+    who.y = next.y
+    return true
+  }
+  who.x += (dx / d) * speed
+  who.y += (dy / d) * speed
+  return false
 }
 
 /** To `to`; desk visits come along the aisle and shuffle the last pixels into the spot. */
@@ -1014,7 +1085,7 @@ function paluBowlSpots() {
 }
 
 function paluNext() {
-  const atDesk = layout.seats.filter((s) => !walkers.has(s.key))
+  const atDesk = layout.seats.filter((s) => !walkers.has(s.key) && (!loft() || loftGeometry.visitable(s)))
   const sniffs = paluSniffSpots()
   const options = [{ act: 'wander', w: 2 }, { act: 'bed', w: 1 }, { act: 'eat', w: 1 }]
   if (sniffs.length) options.push({ act: 'sniff', w: 3 })
@@ -1077,18 +1148,13 @@ function stepPalu() {
   if (next) {
     const dx = next.x - palu.x
     const dy = next.y - palu.y
-    if (Math.abs(dx) >= 0.5) {
+    // side-on when he goes more across than up or down; the little step between the aisle and
+    // his spot is a shuffle, not a turn
+    if (Math.abs(dx) >= 0.5 && Math.abs(dx) >= Math.abs(dy)) {
       palu.left = dx < 0
       palu.dir = 'side'
     } else if (Math.abs(dy) > PALU_AISLE) palu.dir = dy > 0 ? 'down' : 'up'
-    // the little step between the aisle and his spot is a shuffle, not a turn
-    palu.x += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dx))
-    palu.y += Math.max(-PALU_SPEED, Math.min(PALU_SPEED, dy))
-    if (Math.abs(next.x - palu.x) < 0.5 && Math.abs(next.y - palu.y) < 0.5) {
-      palu.x = next.x
-      palu.y = next.y
-      palu.path.shift()
-    }
+    if (stepToward(palu, next, PALU_SPEED)) palu.path.shift()
     return
   }
   if (palu.until === null) palu.until = now + palu.restFor
@@ -1113,15 +1179,16 @@ function paluBox() {
   return { box: [x, y, 18, 6], base: y + 6 }
 }
 
-function drawPalu() {
+function drawPalu(base = painter(ctx)) {
   if (!palu) return
-  const at = painter(ctx, Math.round(palu.x), Math.round(palu.y))
-  const upright = painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 1)
+  const off = (ox, oy) => (x, y, w, h, c) => base(Math.round(palu.x) + ox + x, Math.round(palu.y) + oy + y, w, h, c)
+  const at = off(0, 0)
+  const upright = off(4, -1)
   if (palu.path.length && palu.dir === 'down') paluWalkFront(upright, tick)
   else if (palu.path.length && palu.dir === 'up') paluWalkBack(upright, tick)
   else if (palu.path.length) paluWalk(at, tick, palu.left)
   else if (palu.act === 'sniff' || palu.act === 'eat') paluSniff(at, tick, palu.restLeft)
-  else if (palu.act === 'wander') paluSit(painter(ctx, Math.round(palu.x) + 4, Math.round(palu.y) - 2), tick)
+  else if (palu.act === 'wander') paluSit(off(4, -2), tick)
   else paluLie(at, tick, true, palu.restLeft)
 }
 
@@ -1130,9 +1197,9 @@ function drawSeat(seat) {
   person(p, seat.staff, tick, walkers.has(seat.key))
 }
 
-function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left' } = {}) {
+function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left', size = 12, chip = null } = {}) {
   cssTransform()
-  ctx.font = `${weight} 12px ui-monospace, 'SF Mono', Menlo, monospace`
+  ctx.font = `${weight} ${size}px ui-monospace, 'SF Mono', Menlo, monospace`
   ctx.textBaseline = 'middle'
   ctx.textAlign = align
   ctx.fillStyle = color
@@ -1140,6 +1207,14 @@ function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left' 
   if (ctx.measureText(label).width > maxW) {
     while (label.length > 1 && ctx.measureText(label + '...').width > maxW) label = label.slice(0, -1)
     label += '...'
+  }
+  if (chip) {
+    // a little plate behind the text, as wide as the text
+    const w = Math.ceil(ctx.measureText(label).width) + 6
+    const left = align === 'center' ? cssX - w / 2 : cssX - 3
+    ctx.fillStyle = chip
+    ctx.fillRect(Math.round(left), Math.round(cssY - size / 2 - 2), w, size + 3)
+    ctx.fillStyle = color
   }
   ctx.fillText(label, cssX, cssY)
   ctx.textAlign = 'left'
@@ -1153,7 +1228,8 @@ function bubbleAnchor(key) {
   const seat = layout.seats.find((u) => u.key === key)
   if (!seat) return null
   const w = walkers.get(seat.key)
-  return w ? { x: w.x + 4, y: w.y - 1 } : { x: seat.x + SEAT_W / 2, y: seat.y }
+  if (w) return { x: w.x + 4, y: w.y - 1 }
+  return loft() ? loftGeometry.seatAnchor(seat) : { x: seat.x + SEAT_W / 2, y: seat.y }
 }
 
 function drawBubble(anchor, text) {
@@ -1187,7 +1263,73 @@ function drawBubble(anchor, text) {
   artTransform()
 }
 
+/** Everyone up and about, in the loft: each with where to draw them and the row of their feet. */
+function loftPeople() {
+  const people = []
+  for (const seat of layout.seats) {
+    const w = walkers.get(seat.key)
+    if (!w) continue
+    const x = Math.round(w.x)
+    const y = Math.round(w.y)
+    const kind = w.mode === 'away' ? w.activity?.kind ?? null : null
+    const m = { key: seat.key, kind, spot: w.spot, base: y + 15 }
+    if (kind === 'lounge') {
+      m.base = (w.spot.sofa ? w.spot.sofa.y + 13 : y + 13) + 0.5
+      m.paint = (p) => lounging(p, x, y, seat.staff, tick, w.activity.pose)
+    } else if (kind === 'booth') m.paint = (p) => standing(p, x, y, seat.staff, tick, false, w.left, null, 'phone')
+    else if (kind === 'foosball') m.paint = (p) => standing(p, x, y, seat.staff, tick, false, w.left, null, w.spot.back ? 'playBack' : 'play')
+    else if (kind === 'table') {
+      // the one who has the word changes every few seconds, round the table; the chair comes
+      // from the layout on screen, which may be newer than the spot the walker set out for
+      const chair = layout.common.table?.[assigned.get(seat.key)?.index]?.chair ?? w.spot.chair
+      const seated = layout.seats.filter((s) => walkers.get(s.key)?.mode === 'away' && walkers.get(s.key)?.activity?.kind === 'table')
+      const talking = seated.length > 0 && seated[Math.floor(tick / 24) % seated.length] === seat
+      m.chair = chair
+      m.base = chair.y + 11 + (chair.facing ? 0.5 : -0.5)
+      m.paint = (p) => sitting(p, chair, seat.staff, tick, talking)
+    }
+    else m.paint = (p) => standing(p, x, y, seat.staff, tick, w.path.length > 0, w.left)
+    people.push(m)
+  }
+  for (const [key, v] of visitors) {
+    if (v.mode === 'seated' || v.wait > 0) continue
+    const x = Math.round(v.x)
+    const y = Math.round(v.y)
+    people.push({ key, kind: null, base: y + 15, paint: (p) => standing(p, x, y, v.spec, tick, true, v.left, roleColor(v.spec.role)) })
+  }
+  return people
+}
+
+function drawLoftScene() {
+  artTransform()
+  const dog = paluBox()
+  const people = loftPeople()
+  drawLoft(ctx, layout, {
+    tick,
+    away: (seat) => walkers.has(seat.key),
+    seatedAt: (seat) =>
+      [...visitors]
+        .filter(([key, v]) => v.mode === 'seated' && key.startsWith(`${seat.key}|`))
+        .map(([, v]) => ({ spec: v.spec, index: seat.stools.findIndex((st) => st.x === v.stoolAt.x && st.y === v.stoolAt.y) }))
+        .filter((s) => s.index >= 0),
+    people,
+    sittersAt: new Set(people.filter((m) => m.kind === 'table').map((m) => m.chair)),
+    palu: dog && { base: dog.base, paint: (p) => outlinedAt(p, 0, 0, (q) => drawPalu(q)) },
+    bowls: (p, b) => outlinedAt(p, b.x, b.y, (q) => dogBowls(q, tick)),
+    nameplate,
+    drawText: (...args) => {
+      drawText(...args)
+      artTransform()
+    }
+  })
+}
+
 function draw() {
+  if (loft()) {
+    drawLoftScene()
+    drawSelection()
+    return
+  }
   artTransform()
   const p = painter(ctx)
   drawBuilding(p)
@@ -1248,12 +1390,18 @@ function draw() {
     drawText(nameplate(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, DESK_W * s - 2, color, { align: 'center' })
   }
 
+  drawSelection()
+}
+
+/** The frame around the selected seat, and the speech bubbles. */
+function drawSelection() {
   const pickSeat = selected && seatOf(selected)
   if (pickSeat) {
     artTransform()
+    const [x, y, w, h] = seatBoxOf(pickSeat)
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 0.5
-    ctx.strokeRect(pickSeat.x + 0.25, pickSeat.y + 0.25, SEAT_W - 0.5, SEAT_H + LABEL_H - 0.5)
+    ctx.strokeRect(x + 0.25, y + 0.25, w - 0.5, h - 0.5)
   }
 
   const now = Date.now()
@@ -1284,7 +1432,7 @@ function renderStats() {
     specialists += activeSpecialists(u.staff).length
   }
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
-  const parts = [plural(layout.rooms.length, 'team'), `${layout.seats.length} staff`, `${busy} busy`]
+  const parts = [plural(layout.teamCount ?? layout.rooms.length, 'team'), `${layout.seats.length} staff`, `${busy} busy`]
   if (specialists) parts.push(plural(specialists, 'specialist'))
   if (needYou) parts.push(`${needYou} need you`)
   document.getElementById('stats').textContent = parts.join(' · ')
@@ -1421,6 +1569,11 @@ function sayingOf(key) {
   return staff ? staff.line ?? staff.said ?? STATE_LABEL[staff.state] : ''
 }
 
+/** The box that is a seat on screen, for clicks and the selection frame. */
+function seatBoxOf(seat) {
+  return loft() ? loftGeometry.seatBox(seat) : [seat.x, seat.y, SEAT_W, SEAT_H + LABEL_H]
+}
+
 /** Who is under the point: a person first, wherever they are, then a desk. */
 function whoAt(ax, ay) {
   const inBox = ([x, y, w, h]) => ax >= x && ax < x + w && ay >= y && ay < y + h
@@ -1438,7 +1591,7 @@ function whoAt(ax, ay) {
   // the one drawn last (nearest the bottom) is on top
   const person = people.sort((a, b) => b.base - a.base).find((m) => inBox(m.box))
   if (person) return person.key
-  return layout.seats.find((u) => inBox([u.x, u.y, SEAT_W, SEAT_H + LABEL_H]))?.key ?? null
+  return layout.seats.find((u) => inBox(seatBoxOf(u)))?.key ?? null
 }
 
 // ---- hover card --------------------------------------------------------------------------------
@@ -1531,6 +1684,35 @@ canvas.addEventListener('click', (event) => {
   renderDetail()
   draw()
 })
+
+/** Switches the look: everyone is placed afresh in the new office, nobody walks across. */
+function setTheme(next) {
+  if (!THEMES.includes(next) || next === theme) return
+  theme = next
+  try {
+    localStorage.setItem(THEME_KEY, theme)
+  } catch {
+    // kept for this session only
+  }
+  walkers.clear()
+  visitors.clear()
+  assigned.clear()
+  palu = null
+  scenePrimed = false
+  selected = null
+  opening = null
+  renderThemes()
+  renderDetail()
+  hideCard()
+  resize()
+}
+
+function renderThemes() {
+  for (const button of document.querySelectorAll('#themes button')) button.setAttribute('aria-pressed', String(button.dataset.theme === theme))
+}
+
+for (const button of document.querySelectorAll('#themes button')) button.addEventListener('click', () => setTheme(button.dataset.theme))
+renderThemes()
 
 async function poll() {
   if (document.visibilityState !== 'hidden') {

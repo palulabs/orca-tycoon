@@ -36,6 +36,29 @@
       .stats {
         color: var(--orca-muted-foreground, #9a97a8);
       }
+      /* Brick or loft: two buttons that read as one switch. */
+      .themes {
+        display: inline-flex;
+        margin-left: auto;
+        border: 2px solid var(--orca-muted, #3a3650);
+      }
+      .themes button {
+        padding: 1px 8px;
+        background: transparent;
+        color: var(--orca-muted-foreground, #9a97a8);
+        border: 0;
+        font: inherit;
+        cursor: pointer;
+      }
+      .themes button[aria-pressed='true'] {
+        background: var(--orca-muted, #3a3650);
+        color: var(--orca-foreground, #e8e6f0);
+        font-weight: 600;
+      }
+      .themes button:focus-visible {
+        outline: 2px solid var(--orca-primary, #8e86ff);
+        outline-offset: -2px;
+      }
       /* Takes whatever the header leaves; the office is laid out to fill it, and only an office
          too crowded to fit at the smallest scale scrolls. */
       #office {
@@ -125,6 +148,10 @@
     <header>
       <h1>OFFICE TYCOON</h1>
       <span class="stats" id="stats"></span>
+      <div class="themes" id="themes" role="group" aria-label="Look">
+        <button type="button" data-theme="brick">Brick</button>
+        <button type="button" data-theme="loft">Loft</button>
+      </div>
     </header>
     <div class="empty" id="message" hidden></div>
     <main id="office">
