@@ -2,6 +2,7 @@
 // an agent's pane key to the CLI call that brings it to the front.
 import { assert, test } from 'orca/testing'
 import {
+  cliEnvironment,
   isChatSession,
   labelOf,
   lineOf,
@@ -11,8 +12,22 @@ import {
   switchTo,
   terminalSwitchArgs,
   toSnapshot,
+  windowsCliPath,
   worktreeActivateArgs
 } from './worker'
+
+test('uses the Windows CLI launcher and supplies its required environment', () => {
+  assert.equal(windowsCliPath('C:\\Program Files\\Orca\\Orca.exe'), 'C:\\Program Files\\Orca\\resources\\bin\\orca.exe')
+  assert.deepEqual(
+    cliEnvironment('win32', { ELECTRON_RUN_AS_NODE: '1', PATH: 'example' }, 'C:\\Users\\Example'),
+    { PATH: 'example', APPDATA: 'C:\\Users\\Example\\AppData\\Roaming' }
+  )
+  assert.deepEqual(
+    cliEnvironment('win32', { APPDATA: 'D:\\Roaming', ELECTRON_RUN_AS_NODE: '1' }, 'C:\\Users\\Example'),
+    { APPDATA: 'D:\\Roaming' }
+  )
+  assert.deepEqual(cliEnvironment('linux', { ELECTRON_RUN_AS_NODE: '1' }, '/home/example'), { ELECTRON_RUN_AS_NODE: '1' })
+})
 
 test('groups agents by project and keeps subagents as specialists', () => {
   const raw = {
