@@ -117,13 +117,13 @@ const dpr = () => window.devicePixelRatio || 1
 const THEMES = ['brick', 'loft']
 const THEME_KEY = 'office-tycoon.theme'
 const RENAMED = { classic: 'brick', dollhouse: 'loft' } // what the looks were called before
-let theme = 'brick'
+let theme = 'loft' // a saved choice wins; a new viewer starts in the loft
 try {
   const saved = localStorage.getItem(THEME_KEY)
   const name = RENAMED[saved] ?? saved
   if (THEMES.includes(name)) theme = name
 } catch {
-  // no storage in this frame: start on Brick every time
+  // no storage in this frame: start in the loft every time
 }
 const loft = () => theme === 'loft'
 

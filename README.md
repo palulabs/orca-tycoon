@@ -63,7 +63,8 @@ A status line along the top counts teams, staff, busy agents and how many need y
 
 ## Two looks
 
-The switch in the top right corner picks how the office looks, and the panel remembers it.
+The switch in the top right corner picks how the office looks, and the panel remembers it. The
+office opens in the Loft until you pick Brick.
 
 - **Brick** is the flat office seen from straight above, as in the screenshots above.
 - **Loft** shows the office from the front and above, like a doll's house with its front wall
