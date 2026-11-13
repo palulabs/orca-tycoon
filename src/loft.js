@@ -8,7 +8,7 @@
 // The panel keeps the mechanics (breaks, specialists coming and going, Palú, clicks); this file
 // owns where things are and how they look.
 
-import { C, glyph, look, lounger, roleColor, walker } from './sprites.js'
+import { C, XMAS, christmasTree, festive, festiveHeadgear, glyph, holidayLights, look, lounger, roleColor, walker } from './sprites.js'
 
 const INK = '#1d1b26'
 export const OUTER = 4 // the side walls
@@ -590,7 +590,7 @@ function chairBack(q, cx, y) {
 /** A front-row agent in an office chair, back to you, looking at the screen. */
 function frontAgent(p, cx, y, staff, t, away) {
   if (away || !staff) return ol(p, (q) => chairBack(q, cx, y))
-  const { skin, hair, shirt } = look(staff.id || 'x')
+  const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
   const sleepy = s === 'done' || s === 'idle'
   const facing = s === 'waiting'
@@ -631,6 +631,7 @@ function frontAgent(p, cx, y, staff, t, away) {
       if (sleepy) q(cx - 3, y + 10 + dy, 6, 1, skin)
     }
     chairBack(q, cx, y)
+    if (festive()) festiveHeadgear(q, cx - 3, facing ? y + 4 : y + 4 + dy - bob, costume, !facing)
   })
   marks(p, cx, y + 5, s, t, facing)
   if (s === 'monitoring' && t % 6 < 4) p(cx + 5 + (t % 2), y + 7 - ((t >> 1) % 2), 1, 1, C.steam)
@@ -643,7 +644,7 @@ function backAgent(p, cx, y, staff, t, away) {
     q(cx - 5, y - 17, 10, 9, '#7f8ea3')
   })
   if (away || !staff) return
-  const { skin, hair, shirt } = look(staff.id || 'x')
+  const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
   const sleepy = s === 'done' || s === 'idle'
   const bob = s === 'working' ? t % 2 : 0
@@ -675,9 +676,17 @@ function backAgent(p, cx, y, staff, t, away) {
       q(cx - 2, y - 11 - bob, 1, 2, INK)
       q(cx + 1, y - 11 - bob, 1, 2, INK)
     }
+    if (festive()) festiveHeadgear(q, cx - 3, y - 14 + dy - bob, costume)
   })
   marks(p, cx, y - 14, s, t, s === 'waiting')
   if (s === 'monitoring' && t % 6 < 4) p(cx - 7 + (t % 2), y - 10 - ((t >> 1) % 2), 1, 1, C.steam)
+}
+
+/** A Santa cap, or an elf's green one, on a 5-wide head seen side-on, its top row at (x, y). */
+function cap(q, x, y, costume) {
+  q(x, y, 5, 1, C.white)
+  q(x, y - 2, 4, 2, costume === 'elf' ? XMAS.elfGreen : XMAS.santaRed)
+  q(x + 4, y - 1, 1, 1, C.white)
 }
 
 /** The ? over someone waiting, the ! over someone stuck, the z over someone dozing. */
@@ -707,7 +716,7 @@ function stoolSpecialist(p, x, y, spec, t, mirrored) {
     q(x + 3, y + 16, 2, 1, '#8a2e16')
   })
   if (!spec) return
-  const { skin, hair, shirt } = look(spec.id || 'specialist')
+  const { skin, hair, shirt, costume } = look(spec.id || 'specialist')
   const lean = spec.state === 'working' && (t >> 2) % 2 ? -1 : 0
   ol(q0, (q) => {
     q(x + 1 + lean, y + 4, 5, 2, hair)
@@ -717,6 +726,7 @@ function stoolSpecialist(p, x, y, spec, t, mirrored) {
     q(x + 1, y + 10, 6, 6, shirt)
     q(x + 3, y + 11, 2, 2, roleColor(spec.role))
     q(x - 1 + lean, y + 12, 2, 1, skin)
+    if (festive()) cap(q, x + 1 + lean, y + 4, costume)
   })
   if (spec.state === 'waiting' && (t >> 2) % 2) ol(p, (q) => glyph(q, '?', x + 2, y - 3, C.amber))
   if (spec.state === 'blocked') ol(p, (q) => glyph(q, '!', x + 2, y - 3, C.red))
@@ -1053,8 +1063,9 @@ function barStool(p, { x, y }) {
   })
 }
 
-function plant(p, { x, y }) {
+function plant(p, { x, y }, t = 0) {
   shadow(p, x, y + 15, 10, 2)
+  if (festive()) return pine(p, x, y, t)
   ol(p, (q) => {
     q(x + 1, y + 9, 7, 6, '#b4643c')
     q(x + 1, y + 9, 7, 1, '#cf7a50')
@@ -1063,6 +1074,22 @@ function plant(p, { x, y }) {
     q(x + 3, y + 2, 1, 5, '#3a7a45')
     q(x + 6, y, 1, 4, '#3a7a45')
   })
+}
+
+/** In season the plants are little pines in red pots, their baubles taking turns to light. */
+function pine(p, x, y, t) {
+  ol(p, (q) => {
+    q(x + 1, y + 9, 7, 6, XMAS.santaDark)
+    q(x + 1, y + 9, 7, 1, XMAS.santaRed)
+    q(x, y + 4, 9, 5, XMAS.pineDark)
+    q(x + 1, y + 1, 7, 4, XMAS.pineMid)
+    q(x + 3, y - 2, 3, 4, XMAS.pineLight)
+  })
+  p(x + 4, y - 3, 1, 1, XMAS.starGold)
+  const on = (t >> 2) % 2
+  p(x + 1, y + 6, 1, 1, on ? XMAS.ornamentRed : XMAS.ornamentGold)
+  p(x + 7, y + 5, 1, 1, on ? XMAS.ornamentBlue : XMAS.ornamentRed)
+  p(x + 4, y + 2, 1, 1, on ? XMAS.ornamentGold : XMAS.ornamentBlue)
 }
 
 // Little things on desks, each standing on the desk from row y upward, at most six pixels wide.
@@ -1235,6 +1262,7 @@ export function drawLoft(ctx, layout, world) {
   }
   const t = world.tick
   ctx.drawImage(background(layout), 0, 0)
+  if (festive()) season(p, layout, t)
   const c = layout.common
   const scene = []
   // the room signs on the window, for the first row of rooms
@@ -1244,12 +1272,16 @@ export function drawLoft(ctx, layout, world) {
     scene.push({
       base: line,
       paint: () => {
-        for (const [sx, w] of curtainSegments(layout)) backCurtain(p, sx, w, line)
+        for (const [sx, w] of curtainSegments(layout)) {
+          backCurtain(p, sx, w, line)
+          if (festive()) holidayLights(at(p, sx, line - 27), w, t)
+        }
         pillar(p, layout.building.spineX, line + 2)
         for (const room of layout.rooms) if (room.y === line) sign(p, room.x + 4, line - 25, signW(room))
       }
     })
   })
+  const tree = c.things.find((th) => th.kind === 'plant') // in season, the hangout's big tree
   const playing = world.people.filter((m) => m.kind === 'foosball').length >= 2
   const callers = new Map(world.people.filter((m) => m.kind === 'booth').map((m) => [m.spot.bx, m]))
   for (const thing of c.things) {
@@ -1272,7 +1304,7 @@ export function drawLoft(ctx, layout, world) {
       foosball: () => foosball(p, thing, t, playing),
       barTable: () => barTable(p, thing),
       barStool: () => barStool(p, thing),
-      plant: () => plant(p, thing)
+      plant: () => (festive() && thing === tree ? ol(p, (q) => christmasTree(at(q, thing.x - 3, thing.y - 6), t)) : plant(p, thing, t))
     }[thing.kind]
     if (paint) scene.push({ base, paint })
   }
@@ -1312,6 +1344,20 @@ export function drawLoft(ctx, layout, world) {
   }
 }
 
+/** Christmas over the hall: lights along the window ledge, snow falling past the steel frames and a
+ * red door with a green band, all drawn live over the painted-once background. */
+function season(p, layout, t) {
+  const { artW, building } = layout
+  for (let i = 0; i < artW / 9; i++) {
+    const h = hash(i * 4513 + 7)
+    const fall = (t + ((h >>> 6) % 40)) % (WALL - 4)
+    p((h % artW) + (((t >> 2) + i) % 3) - 1, 1 + fall, 1, 1, C.white)
+  }
+  holidayLights(at(p, 0, WALL - 5), artW, t)
+  p(OUTER, building.doorY + 1, 3, 14, '#b4202a')
+  p(OUTER + 1, building.doorY + 3, 1, 10, '#238547')
+}
+
 function signW(room) {
   return Math.min(room.w - 10, room.name.length * 4 + 14)
 }
@@ -1321,7 +1367,7 @@ function signW(room) {
  * their back to you. Whoever has the word shows three little dots over their head.
  */
 export function sitting(p, chair, staff, t, talking) {
-  const { skin, hair, shirt } = look(staff.id || 'x')
+  const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const x = chair.x
   const y = chair.y
   const facing = chair.facing
@@ -1337,6 +1383,7 @@ export function sitting(p, chair, staff, t, talking) {
       q(x - 1, y + 1, 2, 1, skin)
       q(x + 6, y + 1, 2, 1, skin)
     }
+    if (festive()) cap(q, x + 1, y - 8 + nod, costume)
   })
   if (!facing) tulip(p, chair)
   if (talking) {

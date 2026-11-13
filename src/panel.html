@@ -59,6 +59,13 @@
         outline: 2px solid var(--orca-primary, #8e86ff);
         outline-offset: -2px;
       }
+      /* The Christmas switch, beside the looks, only in season. */
+      .themes.festive {
+        margin-left: 6px;
+      }
+      .themes[hidden] {
+        display: none;
+      }
       /* Takes whatever the header leaves; the office is laid out to fill it, and only an office
          too crowded to fit at the smallest scale scrolls. */
       #office {
@@ -151,6 +158,9 @@
       <div class="themes" id="themes" role="group" aria-label="Look">
         <button type="button" data-theme="brick">Brick</button>
         <button type="button" data-theme="loft">Loft</button>
+      </div>
+      <div class="themes festive" id="christmas" hidden>
+        <button type="button" aria-pressed="false" title="Christmas decorations">🎄</button>
       </div>
     </header>
     <div class="empty" id="message" hidden></div>

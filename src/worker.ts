@@ -5,9 +5,23 @@
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { win32 } from 'node:path'
 import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
+export function windowsCliPath(executable: string): string {
+  return win32.join(win32.dirname(executable), 'resources', 'bin', 'orca.exe')
+}
+
+export function cliEnvironment(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return { ...env }
+  const { ELECTRON_RUN_AS_NODE: _, ...childEnv } = env
+  if (!childEnv.APPDATA) childEnv.APPDATA = win32.join(home, 'AppData', 'Roaming')
+  return childEnv
+}
+
 const CLI_CANDIDATES = [
+  ...(process.platform === 'win32' ? [windowsCliPath(process.execPath)] : []),
   '/Applications/Orca.app/Contents/Resources/bin/orca',
   `${process.env.HOME ?? ''}/Applications/Orca.app/Contents/Resources/bin/orca`
 ]
@@ -23,7 +37,11 @@ function cliPath(): string {
 /** Runs the CLI with an argument array (never a shell) and parses its JSON answer. */
 function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    execFile(cliPath(), args, { timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    execFile(cliPath(), args, {
+      timeout,
+      maxBuffer: 32 * 1024 * 1024,
+      env: cliEnvironment(process.platform, process.env, homedir())
+    }, (error, stdout) => {
       if (error && !stdout) return reject(error)
       let parsed: unknown
       try {
@@ -78,11 +96,11 @@ export async function readAllHosts(
   run: (args: string[], timeout?: number) => Promise<unknown>,
   onServerError: (environment: string, error: unknown) => void = () => {}
 ): Promise<{ local: unknown; servers: ServerAnswer[] }> {
-  const local = await run(['worktree', 'ps', '--json'])
+  const local = await run(['worktree', 'ps', '--agent-wait', '--json'])
   const answers = await Promise.all(
     pairedEnvironments(local).map(async (environment) => {
       try {
-        return { environment, raw: await run(['worktree', 'ps', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
+        return { environment, raw: await run(['worktree', 'ps', '--agent-wait', '--json', '--environment', environment], SERVER_TIMEOUT_MS) }
       } catch (error) {
         onServerError(environment, error)
         return null
@@ -92,10 +110,27 @@ export async function readAllHosts(
   return { local, servers: answers.filter((a): a is ServerAnswer => a !== null) }
 }
 
+/**
+ * Orca's verdict that a terminal agent sits on a prompt only a person can answer:
+ * `{source: 'prompt-text', reason, since?}`, `{source: 'title'}` or `{source: 'hook', since}`.
+ * Anything else (absent, null, a stray primitive) means it is not waiting on you.
+ */
+function waitOf(row: Row): Row | null {
+  const wait = row.agentWait
+  return wait !== null && typeof wait === 'object' && typeof (wait as Row).source === 'string' ? (wait as Row) : null
+}
+
 export function staffState(row: Row): StaffState {
   const state = row.state
-  if (state === 'working') return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
-  if (state === 'waiting' || state === 'blocked' || state === 'done') return state
+  // Orca's own blocked and done win over a stale prompt verdict
+  if (state === 'blocked' || state === 'done') return state
+  if (waitOf(row)) return 'waiting'
+  if (state === 'working') {
+    // `programStatus` lingers from an earlier turn, so only the live activity can say a run failed
+    if ((row.activity as Row | null)?.status === 'failed') return 'blocked'
+    return row.workingMode === 'monitoring' ? 'monitoring' : 'working'
+  }
+  if (state === 'waiting') return state
   return 'idle'
 }
 
@@ -224,10 +259,22 @@ function toolLine(tool: string, input: string | null): string {
   return "I'm working on it"
 }
 
+/** What an agent says for each prompt Orca recognises on its terminal. */
+const WAIT_LINES: Record<string, string> = {
+  'agent-approval-prompt': 'Can I go ahead? I need your OK',
+  'agent-hooks-review-prompt': 'Please review my hooks',
+  'agent-startup-menu-prompt': 'Pick an option to get me started',
+  'agent-update-prompt': 'I have an update to confirm'
+}
+
 /** The one line an agent says when you click it. */
 export function lineOf(row: Row, state: StaffState, specialists: Specialist[]): string {
   const busy = specialists.filter((s) => s.state !== 'done' && s.state !== 'idle')
-  if (state === 'waiting') return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need you to look'
+  if (state === 'waiting') {
+    const reason = str(waitOf(row)?.reason)
+    if (reason && WAIT_LINES[reason]) return WAIT_LINES[reason]
+    return /ask/i.test(String(row.toolName ?? '')) ? 'I have a question for you' : 'I need your input'
+  }
   if (state === 'blocked') return "I'm stuck, can you help?"
   if (state === 'done') return str(row.lastAssistantMessage)?.split('\n')[0]?.slice(0, 120) ?? 'All done!'
   if (state === 'idle') return "I'm free"
