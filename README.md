@@ -2,7 +2,7 @@
 
 Your coding agents, as tiny pixel staff in an office you can watch.
 
-![The Office Tycoon office: five teams at their desks, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/office.png)
+![The Office Tycoon office in the Loft: five teams at islands of desks behind navy curtains, an agent that just finished saying so in a speech bubble, and the hangout in the middle with phone booths, a coffee counter, a sofa on a pink rug, a chat at the round table, foosball and Palú asleep in his bed](docs/office.png)
 
 Office Tycoon is a plugin for [Orca](https://github.com/stablyai/orca), the desktop app for running
 many coding agents in parallel git worktrees. It draws every agent on your machine, its SSH targets and the
@@ -66,13 +66,14 @@ A status line along the top counts teams, staff, busy agents and how many need y
 The switch in the top right corner picks how the office looks, and the panel remembers it. The
 office opens in the Loft until you pick Brick.
 
-- **Brick** is the flat office seen from straight above, as in the screenshots above.
 - **Loft** shows the office from the front and above, like a doll's house with its front wall
   taken off. It is set up like a real office in an old concrete hall: tall steel windows onto a garden
   at the far end, each team in a room closed off by navy curtains, and the hangout in the middle with
   phone booths, a coffee counter, a sofa on a pink rug, foosball and a high table.
+- **Brick** is the flat office seen from straight above, as in the screenshot below and the
+  pictures further down.
 
-![The loft: four teams at islands of six desks behind navy curtains, and the hangout in the middle with phone booths, a coffee counter, a sofa on a pink rug, foosball and Palú asleep in his bed](docs/loft.png)
+![Brick: five teams at their desks on rugs, specialists on stools beside their agents, and a commons band in the middle with the lounge, coffee corner, foosball table, calling booths and Palú asleep in his bed](docs/brick.png)
 
 In the loft, every worktree of a project owns a desk, also while it sleeps: then its chair stays
 empty and its nameplate is dimmed. A project shows up as soon as one of its worktrees has a live

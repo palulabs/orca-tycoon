@@ -264,7 +264,11 @@ function drawerBlocks(room) {
 }
 
 /** The hangout: phone booths, the coffee corner, the sofa on the pink rug, foosball, a bar. */
-function hangout(x, y, w) {
+const HANG_MAX = 330 // wider than this, the hangout keeps its size in the middle of the floor
+
+function hangout(fx, y, fw) {
+  const w = Math.min(fw, HANG_MAX)
+  const x = fx + Math.floor((fw - w) / 2)
   const R = x + w
   const c = { x, y, w, things: [] }
   const add = (kind, props) => {
