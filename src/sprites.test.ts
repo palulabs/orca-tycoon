@@ -1,7 +1,7 @@
 // The glyph table behind the pixel markers: every character the panel and the sprites draw must
 // have a 3 x 5 bitmap, or glyph() silently paints nothing.
 import { assert, test } from 'orca/testing'
-import { C, GLYPHS, XMAS, christmasTree, costumeOf, getTheme, glyph, holidayLights, inChristmasSeason, look, setTheme, workstation } from './sprites.js'
+import { C, GLYPHS, XMAS, christmasTree, costumeOf, festive, glyph, holidayLights, inChristmasSeason, look, setFestive, workstation } from './sprites.js'
 
 test('every glyph the office draws exists and is 3 x 5', () => {
   for (const ch of ['?', '!', 'z', '+']) {
@@ -40,8 +40,8 @@ test('an agent on a paired server works on a thin client, a local one on a dark 
 
 test('christmas theme dresses characters in festive costumes and draws tree and lights', () => {
   try {
-    setTheme('christmas')
-    assert.equal(getTheme(), 'christmas')
+    setFestive(true)
+    assert.equal(festive(), true)
 
     const costumes = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((id) => costumeOf(id)))
     assert.ok(costumes.size >= 2)
@@ -65,7 +65,7 @@ test('christmas theme dresses characters in festive costumes and draws tree and 
     }, 24, 0)
     assert.ok(lightPx.size > 0)
   } finally {
-    setTheme('normal')
+    setFestive(false)
   }
 })
 

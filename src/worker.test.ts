@@ -451,3 +451,37 @@ test('switchTo reaches a paired server through its selector, and only one Orca l
   }
   assert.deepEqual(calls, [])
 })
+
+test('a busy project brings its sleeping worktrees as empty desks, a quiet project stays away', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', agents: [{ paneKey: 'p1', state: 'working' }] },
+        { worktreeId: 'w2', repo: 'web', displayName: 'WEB-2', agents: [] },
+        { worktreeId: 'w3', repo: 'web', displayName: 'WEB-3', isArchived: true, agents: [] },
+        { worktreeId: 'w4', repo: 'quiet', displayName: 'Q-1', agents: [] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['web'])
+  const desks = snap.floors[0].desks
+  assert.deepEqual(desks.map((d) => d.id), ['w1', 'w2'])
+  assert.equal(desks[1].staff.length, 0)
+  assert.equal(desks[1].label, 'WEB-2')
+})
+
+test('a sleeping desk sharing a name never changes a busy desk nameplate', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'w1', repo: 'web', displayName: 'feature', agents: [{ paneKey: 'p1', state: 'working', conversationName: 'Polish the header' }] },
+        { worktreeId: 'w2', repo: 'web', displayName: 'feature', agents: [] }
+      ]
+    }
+  }
+  const [busy, asleep] = toSnapshot(raw, 1).floors[0].desks
+  assert.equal(busy.staff[0].label, 'feature')
+  // with no conversation to borrow from, the sleeping one keeps its own name
+  assert.equal(asleep.label, 'feature')
+})

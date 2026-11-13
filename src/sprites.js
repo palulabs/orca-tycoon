@@ -61,14 +61,15 @@ export function pick(list, seed, shift = 0) {
   return list[(hash(seed) >>> shift) % list.length]
 }
 
-let currentTheme = 'normal'
+// Christmas dresses everyone up, in Brick and in the Loft; the panel turns it on in season.
+let festiveOn = false
 
-export function setTheme(theme) {
-  currentTheme = theme === 'christmas' ? 'christmas' : 'normal'
+export function setFestive(on) {
+  festiveOn = Boolean(on)
 }
 
-export function getTheme() {
-  return currentTheme
+export function festive() {
+  return festiveOn
 }
 
 /** The Christmas look is offered from 15 November through 1 January, by the viewer's local date. */
@@ -110,7 +111,7 @@ export function look(seed) {
   const baseSkin = pick(SKIN, seed)
   const baseHair = pick(HAIR, seed, 8)
   const baseShirt = pick(SHIRT, seed, 16)
-  if (currentTheme !== 'christmas') {
+  if (!festiveOn) {
     return { skin: baseSkin, hair: baseHair, shirt: baseShirt, costume: null }
   }
   const costume = costumeOf(seed)
@@ -129,15 +130,16 @@ export function look(seed) {
   return { skin: baseSkin, hair: baseHair, shirt: baseShirt, costume: null }
 }
 
-/** Draws festive hats, antlers, beards, or Rudolph nose on a 6-wide head at (hx, hy). */
-function drawFestiveHeadgear(p, hx, hy, costume) {
+/** Draws festive hats, antlers, beards, or Rudolph nose on a 6-wide head at (hx, hy); `back`, seen
+ * from behind, leaves off the beard and the nose. */
+export function festiveHeadgear(p, hx, hy, costume, back = false) {
   if (costume === 'santa' || costume === 'grinch') {
     p(hx - 1, hy, 8, 1, C.white)
     p(hx, hy - 1, 6, 1, XMAS.santaRed)
     p(hx + 1, hy - 2, 5, 1, XMAS.santaRed)
     p(hx + 5, hy - 1, 2, 1, XMAS.santaDark)
     p(hx + 6, hy, 2, 2, C.white)
-    if (costume === 'santa') {
+    if (costume === 'santa' && !back) {
       p(hx, hy + 5, 6, 2, C.white)
       p(hx + 1, hy + 7, 4, 1, C.white)
     }
@@ -156,7 +158,7 @@ function drawFestiveHeadgear(p, hx, hy, costume) {
     p(hx + 4, hy - 3, 1, 1, XMAS.antler)
     p(hx - 1, hy + 1, 1, 1, XMAS.reindeerFur)
     p(hx + 6, hy + 1, 1, 1, XMAS.reindeerFur)
-    p(hx + 2, hy + 4, 2, 1, XMAS.rudolphNose)
+    if (!back) p(hx + 2, hy + 4, 2, 1, XMAS.rudolphNose)
   }
 }
 
@@ -222,8 +224,8 @@ export function person(p, staff, t, away = false) {
     p(8, 4 + dy - bob, 1, 2, C.ink)
     p(11, 4 + dy - bob, 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
-    drawFestiveHeadgear(p, 7, 1 + dy - bob, costume)
+  if (festiveOn) {
+    festiveHeadgear(p, 7, 1 + dy - bob, costume)
   }
 }
 
@@ -314,7 +316,7 @@ export function specialist(p, spec, t) {
   p(5 + lean, 1, 1, 3, hair)
   p(2 + lean, 3, 1, 1, C.ink)
   p(1, 6, 6, 5, shirt)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     const hatColor = costume === 'elf' ? XMAS.elfGreen : XMAS.santaRed
     p(1 + lean, 0, 5, 1, C.white)
     p(1 + lean, -2, 4, 2, hatColor)
@@ -327,7 +329,7 @@ export function specialist(p, spec, t) {
 }
 
 export function plant(p, t = 0) {
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     p(1, 6, 5, 3, XMAS.santaDark)
     p(1, 6, 5, 1, XMAS.santaRed)
     p(0, 4, 7, 2, XMAS.pineDark)
@@ -402,8 +404,8 @@ export function lounger(p, staff, t, pose = 'nap') {
     p(2, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
     p(5, 3 + (pose === 'read' ? 1 : 0), 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
-    drawFestiveHeadgear(p, 1, 1 + slump, costume)
+  if (festiveOn) {
+    festiveHeadgear(p, 1, 1 + slump, costume)
   }
   p(0, 6, 8, 5, shirt)
   if (costume === 'santa' || costume === 'grinch') {
@@ -509,8 +511,8 @@ export function walker(p, staff, t, moving, left, badge = null, pose = 'mug') {
     p(left ? 2 : 3, 3 - bob, 1, 2, C.ink)
     p(left ? 4 : 5, 3 - bob, 1, 2, C.ink)
   }
-  if (currentTheme === 'christmas') {
-    drawFestiveHeadgear(p, 1, 0 - bob, costume)
+  if (festiveOn) {
+    festiveHeadgear(p, 1, 0 - bob, costume)
   }
   p(1, 6 - bob, 6, 5, shirt)
   p(0, 7 - bob, 1, 3, shirt)
@@ -592,7 +594,7 @@ export function paluWalk(p, t, left) {
   // red collar with a gold tag
   m(12, 5, 3, 1, COLLAR)
   m(13, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     m(12, -1, 4, 1, C.white)
     m(11, -3, 4, 2, XMAS.santaRed)
     m(10, -2, 1, 1, C.white)
@@ -621,7 +623,7 @@ export function paluSniff(p, t, left) {
   m(15, 4, 1, 1, C.ink)
   m(17, 6 - twitch, 1, 1, C.ink)
   m(12, 6, 2, 1, COLLAR)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     m(12, 1, 4, 1, C.white)
     m(11, -1, 4, 2, XMAS.santaRed)
     m(10, 0, 1, 1, C.white)
@@ -648,10 +650,10 @@ export function paluWalkFront(p, t) {
     p(3, 2, 1, 1, C.ink)
     p(6, 2, 1, 1, C.ink)
   }
-  p(4, 3, 2, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  p(4, 3, 2, 1, festiveOn ? XMAS.rudolphNose : C.ink)
   p(3, 5, 4, 1, COLLAR)
   p(4, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -677,7 +679,7 @@ export function paluWalkBack(p, t) {
   // the little stub of a tail on his rump, wiggling side to side
   p(4 + wag, 6, 2, 2, FUR_SHADE)
   p(4 + wag, 6, 2, 1, FUR)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -701,10 +703,10 @@ export function paluSit(p, t) {
     p(3, 2, 1, 1, C.ink)
     p(6, 2, 1, 1, C.ink)
   }
-  p(4, 3, 2, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  p(4, 3, 2, 1, festiveOn ? XMAS.rudolphNose : C.ink)
   p(3, 5, 4, 1, COLLAR)
   p(4, 6, 1, 1, TAG)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     p(2, -1, 6, 1, C.white)
     p(3, -3, 4, 2, XMAS.santaRed)
     p(7, -2, 1, 1, C.white)
@@ -723,9 +725,9 @@ export function paluLie(p, t, asleep, left = false) {
   m(12, 1, 2, 4, FUR_SHADE)
   if (asleep) m(14, 2, 2, 1, C.ink)
   else m(15, 2, 1, 1, C.ink)
-  m(17, 3, 1, 1, currentTheme === 'christmas' ? XMAS.rudolphNose : C.ink)
+  m(17, 3, 1, 1, festiveOn ? XMAS.rudolphNose : C.ink)
   m(12, 4, 2, 1, COLLAR)
-  if (currentTheme === 'christmas') {
+  if (festiveOn) {
     m(12, -1, 4, 1, C.white)
     m(11, -3, 4, 2, XMAS.santaRed)
     m(10, -2, 1, 1, C.white)

@@ -37,6 +37,9 @@ export type Desk = {
   environment: string | null
   /** That server's name, for the detail box; null on this machine. */
   host: string | null
+  /** The desk's nameplate when nobody sits at it: its ticket key, issue number or own name. */
+  label: string
+  /** Its agents; none when the worktree is asleep. */
   staff: Staff[]
 }
 
