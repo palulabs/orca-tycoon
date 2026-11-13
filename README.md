@@ -23,8 +23,9 @@ orca plugin dev load .        # prints an approval; re-run with the --approve fl
 orca plugin open local.office-tycoon --panel office
 ```
 
-The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/bin/orca`, then
-`~/Applications/...`, then `orca` on your `PATH`.
+The worker looks for the Orca CLI beside the running Orca on Windows (`resources\bin\orca.exe`), at
+`/Applications/Orca.app/Contents/Resources/bin/orca` and `~/Applications/...` on macOS, then `orca`
+on your `PATH`.
 
 ## Who works here
 
@@ -56,8 +57,9 @@ The worker looks for the Orca CLI at `/Applications/Orca.app/Contents/Resources/
   too. Click him while he rests and he gets up and goes on to whatever he does next. He is only
   there for company and never changes what anyone does.
 - **Agents speak up.** When an agent finishes, a speech bubble shows the first line of its last
-  reply. When one starts waiting for you it says "Need you!", and when it gets stuck it says
-  "Stuck!".
+  reply. When one starts waiting for you an amber `?` bobs over its head and a thought bubble says
+  "Need you!"; click it and it says what the prompt asks, such as "Can I go ahead? I need your OK".
+  When it gets stuck it says "Stuck!".
 
 A status line along the top counts teams, staff, busy agents and how many need you.
 
@@ -87,6 +89,15 @@ free. Specialists sit on an orange stool right beside their agent, two at most, 
 The loft's hangout adds one thing to do on a break: a chat at the round white table, two or more
 round it taking turns to talk, never one alone.
 
+## Christmas
+
+From 15 November through 1 January a 🎄 button sits beside the switch, and the office dresses up in
+both looks: agents come in as Santa, an elf, a reindeer or the Grinch, Palú wears a Santa cap and a
+red nose, a big tree with presents stands in the commons or the hangout, the plants become little pines, and
+fairy lights and snow go up by the windows. In the loft a few desks and drawer blocks get a present
+too. It is on by default; press the button to turn it off, and the panel remembers. The rest of the
+year the button is gone and the office is plain.
+
 ## Reading the monitors
 
 ![One desk per state on a narrow panel: a red flashing exclamation mark, an amber question mark and typing at their desks, while the done agent naps on the sofa and the monitoring one takes a call in a booth](docs/states.png)
@@ -95,7 +106,7 @@ round it taking turns to talk, never one alone.
 | --- | --- |
 | working | typing, code scrolling on screen |
 | watching background tasks | on a break in the commons, never napping |
-| waiting for you | amber `?` on screen |
+| waiting for you | amber `?` on screen and over their head |
 | blocked | red flashing screen with `!` |
 | done | on a break in the commons, often napping; dozing at the desk with a `z` when the commons are full |
 
