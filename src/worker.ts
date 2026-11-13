@@ -5,9 +5,23 @@
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { win32 } from 'node:path'
 import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
+export function windowsCliPath(executable: string): string {
+  return win32.join(win32.dirname(executable), 'resources', 'bin', 'orca.exe')
+}
+
+export function cliEnvironment(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, home: string): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return { ...env }
+  const { ELECTRON_RUN_AS_NODE: _, ...childEnv } = env
+  if (!childEnv.APPDATA) childEnv.APPDATA = win32.join(home, 'AppData', 'Roaming')
+  return childEnv
+}
+
 const CLI_CANDIDATES = [
+  ...(process.platform === 'win32' ? [windowsCliPath(process.execPath)] : []),
   '/Applications/Orca.app/Contents/Resources/bin/orca',
   `${process.env.HOME ?? ''}/Applications/Orca.app/Contents/Resources/bin/orca`
 ]
@@ -23,7 +37,11 @@ function cliPath(): string {
 /** Runs the CLI with an argument array (never a shell) and parses its JSON answer. */
 function runCli(args: string[], timeout = CLI_TIMEOUT_MS): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    execFile(cliPath(), args, { timeout, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    execFile(cliPath(), args, {
+      timeout,
+      maxBuffer: 32 * 1024 * 1024,
+      env: cliEnvironment(process.platform, process.env, homedir())
+    }, (error, stdout) => {
       if (error && !stdout) return reject(error)
       let parsed: unknown
       try {
