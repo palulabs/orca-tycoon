@@ -287,7 +287,8 @@ function hangout(fx, y, fw) {
     const sofa = add('sofa', { x: rug.x + 16, y: rug.y + 4, w: Math.max(40, rug.w - 68) })
     add('coffeeTable', { x: sofa.x + Math.floor(sofa.w / 2) - 12, y: rug.y + 24 })
     const chairs = tableGroup(add, rug.x + rug.w - 48, y + 56)
-    const foos = add('foosball', { x: R - 96, y: y + 50 })
+    const foos = add('foosball', { x: R - 120, y: y + 50 })
+    add('tree', { x: R - 82, y: y + 47 }) // in season, between the foosball and the high table
     add('barStool', { x: R - 60, y: y + 54 })
     add('barStool', { x: R - 14, y: y + 54 })
     add('barTable', { x: R - 48, y: y + 48 })
@@ -327,6 +328,10 @@ function hangout(fx, y, fw) {
       add('barStool', { x: bx + 5, y: y + 112 })
       add('barStool', { x: bx + 21, y: y + 112 })
     }
+    // in season, the tree stands between Palú's corner and the high table, or the right edge
+    const treeL = x + 76
+    const treeR = clear - (x + 80) >= 50 ? clear - 50 : clear
+    if (treeR - treeL >= 17) add('tree', { x: Math.round((treeL + treeR) / 2) - 7, y: y + 97 })
     c.doorY = y + 94
     finish(c, { booths, counter, sofa, foos, chairs })
   }
@@ -453,6 +458,8 @@ function footprint(t) {
       return [t.x, t.y + 10, 7, 4]
     case 'plant':
       return [t.x + 1, t.y + 10, 8, 5]
+    case 'tree':
+      return festive() ? [t.x + 2, t.y + 17, 11, 4] : null
     default:
       return null
   }
@@ -1151,7 +1158,18 @@ function deskProp(p, cellX, surface, key) {
   if (roll % 100 >= 35) return
   const name = PROP_NAMES[(roll >>> 8) % PROP_NAMES.length]
   const x = (roll >>> 16) % 2 ? cellX + 2 : cellX + IW - 8
+  // in season about half of these are a little present instead
+  if (festive() && (roll >>> 20) % 2) return ol(p, (q) => present(q, x, surface, 5, 4, XMAS.santaRed, XMAS.starGold))
   ol(p, (q) => PROPS[name](q, x, surface))
+}
+
+/** A wrapped present w x h standing on row `base`, its ribbon both ways and a bow on top. */
+function present(q, x, base, w, h, box, ribbon) {
+  const mid = x + (w >> 1)
+  q(x, base - h, w, h, box)
+  q(mid, base - h, 1, h, ribbon)
+  q(x, base - h + (h >> 1), w, 1, ribbon)
+  q(mid - 1, base - h - 1, 3, 1, ribbon)
 }
 
 /** A slim yellow drawer block, maybe with a tiny retro computer, a plant or books on top. */
@@ -1178,6 +1196,12 @@ function drawers(p, { x, base, h, top }, t) {
       q(x + 3, y - 7, 2, 3, '#4f9d5a')
       q(x + 7, y - 7, 2, 3, '#4f9d5a')
       q(x + 5, y - 8, 2, 4, '#3a7a45')
+    })
+  } else if (!top && festive()) {
+    // in season a bare drawer block gets a little stack of presents
+    ol(p, (q) => {
+      present(q, x + 1, y, 9, 5, XMAS.santaRed, XMAS.starGold)
+      present(q, x + 3, y - 6, 6, 4, XMAS.elfGreen, C.white)
     })
   } else if (top === 'books') {
     ol(p, (q) => {
@@ -1219,6 +1243,8 @@ function thingBase(t) {
       return t.y + 14
     case 'plant':
       return t.y + 15
+    case 'tree':
+      return t.y + 21
     default:
       return t.y
   }
@@ -1281,7 +1307,9 @@ export function drawLoft(ctx, layout, world) {
       }
     })
   })
-  const tree = c.things.find((th) => th.kind === 'plant') // in season, the hangout's big tree
+  // in season the hangout's big tree, or its first plant when there is no room for one
+  const bigPlant = c.things.some((th) => th.kind === 'tree') ? null : c.things.find((th) => th.kind === 'plant')
+  const bigTree = (x, y) => ol(p, (q) => christmasTree(at(q, x, y), t))
   const playing = world.people.filter((m) => m.kind === 'foosball').length >= 2
   const callers = new Map(world.people.filter((m) => m.kind === 'booth').map((m) => [m.spot.bx, m]))
   for (const thing of c.things) {
@@ -1304,7 +1332,8 @@ export function drawLoft(ctx, layout, world) {
       foosball: () => foosball(p, thing, t, playing),
       barTable: () => barTable(p, thing),
       barStool: () => barStool(p, thing),
-      plant: () => (festive() && thing === tree ? ol(p, (q) => christmasTree(at(q, thing.x - 3, thing.y - 6), t)) : plant(p, thing, t))
+      plant: () => (festive() && thing === bigPlant ? bigTree(thing.x - 3, thing.y - 6) : plant(p, thing, t)),
+      tree: () => festive() && bigTree(thing.x, thing.y)
     }[thing.kind]
     if (paint) scene.push({ base, paint })
   }
