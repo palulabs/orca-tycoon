@@ -1,7 +1,7 @@
 // The glyph table behind the pixel markers: every character the panel and the sprites draw must
 // have a 3 x 5 bitmap, or glyph() silently paints nothing.
 import { assert, test } from 'orca/testing'
-import { C, GLYPHS, glyph, workstation } from './sprites.js'
+import { C, GLYPHS, XMAS, christmasTree, costumeOf, getTheme, glyph, holidayLights, inChristmasSeason, look, setTheme, workstation } from './sprites.js'
 
 test('every glyph the office draws exists and is 3 x 5', () => {
   for (const ch of ['?', '!', 'z', '+']) {
@@ -38,6 +38,37 @@ test('an agent on a paired server works on a thin client, a local one on a dark 
   assert.equal(paint(true, 'done', 2).get('2,11'), C.thinEdge)
 })
 
+test('christmas theme dresses characters in festive costumes and draws tree and lights', () => {
+  try {
+    setTheme('christmas')
+    assert.equal(getTheme(), 'christmas')
+
+    const costumes = new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((id) => costumeOf(id)))
+    assert.ok(costumes.size >= 2)
+    for (const c of costumes) {
+      assert.ok(['santa', 'elf', 'reindeer', 'grinch'].includes(c))
+    }
+
+    const lk = look('agent-1')
+    assert.ok(lk.costume)
+
+    const treePx = new Map<string, string>()
+    christmasTree((x: number, y: number, w: number, h: number, c: string) => {
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) treePx.set(`${x + i},${y + j}`, c)
+    }, 0)
+    assert.equal(treePx.get('7,-1'), C.white)
+    assert.equal(treePx.get('7,17'), XMAS.woodTrunk)
+
+    const lightPx = new Map<string, string>()
+    holidayLights((x: number, y: number, w: number, h: number, c: string) => {
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) lightPx.set(`${x + i},${y + j}`, c)
+    }, 24, 0)
+    assert.ok(lightPx.size > 0)
+  } finally {
+    setTheme('normal')
+  }
+})
+
 test('a waiting agent paints an animated question mark overhead', () => {
   const px = new Map<string, string>()
   workstation((x: number, y: number, w: number, h: number, c: string) => {
@@ -48,4 +79,14 @@ test('a waiting agent paints an animated question mark overhead', () => {
   assert.equal(px.get('17,0'), C.amber)
   // nothing is painted above the seat's own cell, into the row above
   assert.ok([...px.keys()].every((k) => Number(k.split(',')[1]) >= 0))
+})
+
+test('the christmas theme is offered from 15 November through 1 January only', () => {
+  const on = (y: number, m: number, d: number) => inChristmasSeason(new Date(y, m - 1, d, 12))
+  assert.equal(on(2026, 11, 14), false)
+  assert.equal(on(2026, 11, 15), true)
+  assert.equal(on(2026, 12, 31), true)
+  assert.equal(on(2027, 1, 1), true)
+  assert.equal(on(2027, 1, 2), false)
+  assert.equal(on(2027, 7, 1), false)
 })
