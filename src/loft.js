@@ -782,11 +782,12 @@ function island(p, g, isl, world) {
     const row = half || i < 3 ? 0 : 1
     g.drawImage(mat(cell ? cell.unit ?? cell.key : `empty|${x}|${y}|${i}`, IW - 6, ID - 4), x + (i % 3) * IW + 3, y + row * ID + 2)
   })
-  if (!half) for (let i = 0; i < 3; i++) monitorBack(p, x + i * IW + MON_X, y + 2, staffed(cells[i]), t)
+  // a computer only where a worktree has its desk; a spare desk is just the desk
+  if (!half) for (let i = 0; i < 3; i++) if (cells[i]) monitorBack(p, x + i * IW + MON_X, y + 2, staffed(cells[i]), t)
   for (let i = 0; i < 3; i++) {
     const cell = cells[half ? i : i + 3]
     const seat = staffed(cell)
-    monitorFront(p, x + i * IW + MON_X, y + row0 - 4, seat, t)
+    if (cell) monitorFront(p, x + i * IW + MON_X, y + row0 - 4, seat, t)
     if (cell) deskProp(p, x + i * IW, y + row0 + 5, cell.unit ?? cell.key)
     frontAgent(p, x + i * IW + HALF, y + row0 + 6, seat?.staff, t, seat && world.away(seat))
     kicks(seat)
