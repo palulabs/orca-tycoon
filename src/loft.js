@@ -582,19 +582,42 @@ function monitorBack(p, x, y, seat, t) {
   p(x + MON - 4, y + 1, 3, 1, blink && LIGHT[s] ? LIGHT[s] : '#2a2833')
 }
 
+/** A front-row office chair seen from behind, the same chair as chairFront: rounded back, armrests, post and base. */
 function chairBack(q, cx, y) {
-  q(cx - 6, y + 15, 12, 8, '#eeece8')
-  q(cx - 5, y + 16, 10, 6, '#7f8ea3')
-  q(cx - 3, y + 19, 6, 2, '#3e4656')
-  q(cx - 1, y + 23, 2, 3, '#c9c8cf')
+  q(cx - 5, y + 15, 10, 1, '#eeece8')
+  q(cx - 6, y + 16, 12, 8, '#eeece8')
+  q(cx - 4, y + 16, 8, 1, '#7f8ea3')
+  q(cx - 5, y + 17, 10, 6, '#6d7b90') // the shell of the back
+  q(cx - 3, y + 19, 6, 2, '#7f8ea3')
+  q(cx - 8, y + 20, 2, 5, '#e3e2e6') // armrests
+  q(cx + 6, y + 20, 2, 5, '#e3e2e6')
+  q(cx - 8, y + 20, 2, 1, '#6b6a75')
+  q(cx + 6, y + 20, 2, 1, '#6b6a75')
+  q(cx - 1, y + 24, 2, 3, '#c9c8cf')
   q(cx - 6, y + 26, 12, 1, '#e3e2e6')
   q(cx - 6, y + 27, 2, 1, '#6b6a75')
   q(cx + 4, y + 27, 2, 1, '#6b6a75')
 }
 
+/** A back-row office chair seen from the front: rounded back, seat and armrests, its post down to the desk (which hides the rest). */
+function chairFront(q, cx, y) {
+  q(cx - 1, y - 6, 2, 6, '#c9c8cf') // the gas lift, down to where the desk hides the base
+  q(cx - 5, y - 18, 10, 1, '#eeece8')
+  q(cx - 6, y - 17, 12, 9, '#eeece8')
+  q(cx - 4, y - 17, 8, 1, '#7f8ea3')
+  q(cx - 5, y - 16, 10, 7, '#7f8ea3')
+  q(cx - 3, y - 13, 6, 2, '#8f9db1') // a soft sheen on the back cushion
+  q(cx - 6, y - 8, 12, 3, '#6d7b90') // the seat
+  q(cx - 6, y - 8, 12, 1, '#94a2b6')
+  q(cx - 8, y - 11, 2, 6, '#e3e2e6') // armrests
+  q(cx + 6, y - 11, 2, 6, '#e3e2e6')
+  q(cx - 8, y - 11, 2, 1, '#6b6a75')
+  q(cx + 6, y - 11, 2, 1, '#6b6a75')
+}
+
 /** A front-row agent in an office chair, back to you, looking at the screen. */
 function frontAgent(p, cx, y, staff, t, away) {
-  if (away || !staff) return ol(p, (q) => chairBack(q, cx, y))
+  if (away || !staff) return ol(p, (q) => chairBack(q, cx, y - 5)) // empty: pushed in toward the desk
   const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
   const sleepy = s === 'done' || s === 'idle'
@@ -644,10 +667,8 @@ function frontAgent(p, cx, y, staff, t, away) {
 
 /** A back-row agent behind the desk, facing you over the monitor. */
 function backAgent(p, cx, y, staff, t, away) {
-  ol(p, (q) => {
-    q(cx - 6, y - 18, 12, 11, '#eeece8')
-    q(cx - 5, y - 17, 10, 9, '#7f8ea3')
-  })
+  // an empty chair is pushed in under the desk, only the top of its back showing; a taken one is out
+  ol(p, (q) => chairFront(q, cx, away || !staff ? y + 9 : y))
   if (away || !staff) return
   const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
@@ -781,11 +802,11 @@ function island(p, g, isl, world) {
     g.drawImage(mat(cell ? cell.unit ?? cell.key : `empty|${x}|${y}|${i}`, IW - 6, ID - 4), x + (i % 3) * IW + 3, y + row * ID + 2)
   })
   // a computer only where a worktree has its desk; a spare desk is just the desk
-  if (!half) for (let i = 0; i < 3; i++) monitorBack(p, x + i * IW + MON_X, y + 2, staffed(cells[i]), t)
+  if (!half) for (let i = 0; i < 3; i++) if (cells[i]) monitorBack(p, x + i * IW + MON_X, y + 2, staffed(cells[i]), t)
   for (let i = 0; i < 3; i++) {
     const cell = cells[half ? i : i + 3]
     const seat = staffed(cell)
-    monitorFront(p, x + i * IW + MON_X, y + row0 - 4, seat, t)
+    if (cell) monitorFront(p, x + i * IW + MON_X, y + row0 - 4, seat, t)
     if (cell) deskProp(p, x + i * IW, y + row0 + 5, cell.unit ?? cell.key)
     frontAgent(p, x + i * IW + HALF, y + row0 + 6, seat?.staff, t, seat && world.away(seat))
     kicks(seat)
@@ -801,38 +822,312 @@ function buildingWindow(p, artW, spineX, night = false) {
   if (night) {
     for (let i = 0; i < artW / 3; i++) {
       const h = hash(i * 6151 + 17)
-      p(h % artW, 5 + ((h >>> 9) % 39), (h & 3) === 0 ? 2 : 1, 1, ['#d9e8ff', '#8fb9e5', '#f7d889'][(h >>> 14) % 3])
+      p(h % artW, 5 + ((h >>> 9) % 30), (h & 3) === 0 ? 2 : 1, 1, ['#d9e8ff', '#8fb9e5', '#f7d889'][(h >>> 14) % 3])
     }
     const mx = Math.max(16, Math.min(artW - 26, Math.round(artW * 0.72)))
-    p(mx, 12, 11, 11, '#f4e4a8')
-    p(mx + 2, 10, 7, 2, '#f4e4a8')
-    p(mx + 2, 23, 7, 2, '#f4e4a8')
-    p(mx + 7, 13, 5, 9, sky)
+    p(mx, 4, 11, 11, '#f4e4a8')
+    p(mx + 2, 2, 7, 2, '#f4e4a8')
+    p(mx + 2, 15, 7, 2, '#f4e4a8')
+    p(mx + 7, 5, 5, 9, sky)
   } else {
-    // Pixel clouds make the doubled-height window read as open sky instead of another room wall.
-    for (const [x, y, w] of [[12, 10, 26], [Math.round(artW * 0.48), 24, 34], [artW - 46, 8, 28]]) {
+    for (const [x, y, w] of [[12, 4, 26], [Math.round(artW * 0.48), 10, 34], [artW - 46, 2, 28]]) {
       p(x, y + 4, w, 4, '#f4f7f2')
       p(x + 6, y + 2, Math.max(8, w - 12), 2, '#ffffff')
       p(x + 12, y, Math.max(6, w - 24), 2, '#ffffff')
     }
-    for (let i = 0; i < artW / 4; i++) {
-      const h = hash(i * 6151)
-      p(h % artW, 47 + ((h >>> 9) % (WALL - 50)), 1, 2 + ((h >>> 4) % 3), ['#c9b56a', '#7e9a5c', '#b08a52', '#d8c98a'][(h >>> 14) % 4])
+  }
+  skyline(p, artW, night)
+  // the street side: a kerb, a strip of verge, then a paved path along the glass, birches in their pits
+  p(0, 46, artW, WALL - 46, horizon)
+  p(0, 46, artW, 2, night ? '#2a3a58' : '#b9b6ad') // the far kerb
+  const grass = night ? ['#2c4660', '#24405a', '#3a5068', '#31506a'] : ['#c9b56a', '#7e9a5c', '#b08a52', '#d8c98a']
+  for (let i = 0; i < artW / 4; i++) {
+    const h = hash(i * 6151)
+    p(h % artW, 48 + ((h >>> 9) % 3), 1, 1 + ((h >>> 4) % 2), grass[(h >>> 14) % 4])
+  }
+  const PATH = 51
+  const stone = night ? ['#33435f', '#2f3e59', '#38496a'] : ['#d6cfc1', '#cdc5b6', '#ddd7cb']
+  const joint = night ? '#223150' : '#b3ab9c'
+  p(0, PATH, artW, WALL - 3 - PATH, stone[0])
+  p(0, PATH, artW, 1, night ? '#4a5b7c' : '#e9e4d8') // the edging
+  for (let row = 0, y = PATH + 1; y < WALL - 3; row++, y += 4) {
+    const rh = Math.min(4, WALL - 3 - y)
+    p(0, y + rh - 1, artW, 1, joint)
+    for (let x = row & 1 ? -5 : 0, k = 0; x < artW; x += 10, k++) {
+      const h = hash(row * 4099 + k * 131)
+      p(x + 1, y, 9, rh - 1, stone[h % 3])
+      p(x, y, 1, rh - 1, joint)
+      if ((h >>> 8) % 9 === 0) p(x + 2 + ((h >>> 12) % 6), y + 1, 1, 1, joint) // a chip, a crack
     }
   }
-  p(0, 46, artW, WALL - 46, horizon)
-  // Two horizontal mullions and the concrete columns retain the Loft's industrial identity.
+  for (let [kind, tx] of [Math.round(artW * 0.2), Math.round(artW * 0.63)].entries()) {
+    if (Math.abs(tx - spineX - 5) < 16) tx = spineX + 26 // never behind the column over the walkway
+    p(tx - 5, 58, 12, 6, night ? '#1d2c44' : '#6b5a45') // the tree pit
+    p(tx - 5, 58, 12, 1, joint)
+    for (let i = 0; i < 6; i++) p(tx - 4 + i * 2, 60 + (i & 1), 1, 2, grass[(i + tx) % 4])
+    birch(p, tx, night, kind)
+  }
+  // the steel frame: two horizontal mullions, and concrete columns with their rusty edges
   const FR = night ? '#40557c' : '#4d5a53'
   p(0, 0, artW, 1, FR)
   for (const y of [22, 45, WALL - 3]) p(0, y, artW, 1, FR)
   for (let x = 6; x < artW; x += 20) p(x, 0, 1, WALL - 3, FR)
   for (const [cx, cw] of [[0, 6], [spineX, 10], [artW - 6, 6]]) {
     p(cx, 0, cw, WALL - 3, night ? '#293b61' : '#b4afa5')
+    if (!night) {
+      for (let i = 0; i < 10; i++) {
+        const h = hash(cx * 13 + i)
+        p(cx + 1 + (h % Math.max(1, cw - 2)), (h >>> 8) % (WALL - 4), 1, 1, '#9f998e')
+      }
+    }
     p(cx, 0, 1, WALL - 3, night ? '#6b82aa' : '#c0632e')
     p(cx + cw - 1, 0, 1, WALL - 3, night ? '#6b82aa' : '#c0632e')
   }
   p(0, WALL - 3, artW, 3, night ? '#1c2c4d' : '#8e9590')
   p(0, WALL, artW, 1, night ? '#0b1428' : '#6f7672')
+}
+
+// The buildings across the street, each its own: brick, render, concrete or stucco, its own height,
+// window rhythm and roof. Seeded by position, so the same width always draws the same street.
+const FACADES = [
+  // wall, mortar or shade, trim, window by day, window at night when lit
+  { wall: '#b5654a', line: '#a1573f', trim: '#e8e1d4', glass: '#5d6670', lit: '#f2c96b', brick: true },
+  { wall: '#dbc38f', line: '#ceb47f', trim: '#e8e8e3', glass: '#5d6670', lit: '#f5d98a', brick: true },
+  { wall: '#c9cdd0', line: '#b4b9bd', trim: '#eef0f0', glass: '#4f6a80', lit: '#e9e3b0' },
+  { wall: '#e9dcc4', line: '#d9c9ad', trim: '#a9805a', glass: '#56606b', lit: '#f7d48a' },
+  { wall: '#8f9cab', line: '#7f8c9b', trim: '#d6dde4', glass: '#3e4c5c', lit: '#ffe39a' },
+  { wall: '#c98d6c', line: '#b97c5c', trim: '#f0e6d8', glass: '#5a5f66', lit: '#f4c46a' }
+]
+const dusk = (hex, k) => {
+  const n = parseInt(hex.slice(1), 16)
+  const mix = (v, to) => Math.round(v * k + to * (1 - k))
+  return `rgb(${mix(n >> 16, 22)},${mix((n >> 8) & 255, 34)},${mix(n & 255, 64)})`
+}
+
+const shade = (night) => (col) => (night ? dusk(col, 0.32) : col)
+
+/** The Klokgebouw: a long Philips brick hall and its slim concrete tower with the clock. Returns its width. */
+function klokgebouw(p, x, base, night) {
+  const c = shade(night)
+  const w = 38
+  const top = base - 17
+  p(x, top, w, 17, c('#9c4a35'))
+  for (let r = top + 2; r < base; r += 2) p(x, r, w, 1, c('#8a4130'))
+  p(x - 1, top, w + 2, 2, c('#d8d2c6'))
+  for (let wy = top + 4; wy < base - 3; wy += 5) {
+    for (let k = 0; k < 6; k++) p(x + 3 + k * 6, wy, 3, 3, night && hash(wy * 7 + k) % 3 === 0 ? '#f2c96b' : night ? '#16203a' : '#5a6672')
+  }
+  // the tower: concrete, the clock high on its face
+  const tx = x + 15
+  p(tx, base - 40, 8, 23, c('#cfcac0'))
+  p(tx + 7, base - 40, 1, 23, c('#b0aa9f'))
+  p(tx - 1, base - 41, 10, 1, c('#8e8a83'))
+  for (let ly = base - 30; ly < top; ly += 4) p(tx + 3, ly, 2, 2, c('#7a8088'))
+  p(tx + 1, base - 39, 6, 6, night ? '#f4e4a8' : '#f6f4ee')
+  p(tx + 3, base - 38, 1, 3, '#2a2a33')
+  p(tx + 4, base - 36, 2, 1, '#2a2a33')
+  return w
+}
+
+/** The Trudo tower: slim and white, its balconies full of trees. Returns its width. */
+function trudo(p, x, base, night) {
+  const c = shade(night)
+  const w = 14
+  const top = base - 36
+  p(x, top, w, 36, c('#e3e1da'))
+  p(x + w - 2, top, 2, 36, c('#c7c4bb'))
+  for (let fy = top + 2; fy < base - 2; fy += 3) {
+    p(x, fy + 2, w, 1, c('#b9b6ad'))
+    for (let k = 0; k < 3; k++) {
+      const h = hash(fy * 13 + k * 7 + x)
+      p(x + 1 + k * 4, fy, 3, 2, night ? (h % 4 === 0 ? '#f2c96b' : '#16203a') : '#5a6672')
+      if (h % 3) p(x + k * 4 + ((h >>> 4) % 3), fy - 1, 2, 2, c(['#6f9a48', '#88ad4e', '#c9b24a'][(h >>> 8) % 3]))
+    }
+  }
+  return w
+}
+
+/**
+ * An easter egg: the Avular building, home of the people who made this. A low glass hall, the red
+ * entrance, and the brick block with its tall green-framed glass gable and the white arrow. Returns its width.
+ */
+function avular(p, x, base, night) {
+  const c = shade(night)
+  const green = c('#3d6a46')
+  const glass = (k) => (night ? (k % 3 ? '#e9c070' : '#c99a52') : ['#7fa3b8', '#8db0c2', '#6f93a8'][k % 3])
+  // the glass hall to the left
+  p(x, base - 15, 16, 15, glass(0))
+  for (let gx = x; gx <= x + 15; gx += 3) p(gx, base - 15, 1, 15, green)
+  for (const gy of [base - 15, base - 9, base - 4]) p(x, gy, 16, 1, green)
+  p(x, base - 17, 16, 2, c('#5e5a52'))
+  // the red entrance
+  p(x + 16, base - 6, 4, 6, '#d23a32') // the red stays red at night too, like the real one under its lights
+  p(x + 17, base - 4, 2, 4, night ? '#f2c96b' : '#3a2a2a')
+  // the brick block
+  const bx = x + 20
+  p(bx, base - 22, 20, 22, c('#c9ae7e'))
+  for (let r = base - 20; r < base; r += 2) p(bx, r, 20, 1, c('#b89c6c'))
+  p(bx, base - 22, 20, 1, green)
+  // the glazed gable, rising above the brick to its point
+  const gx = bx + 4
+  const gw = 12
+  for (let y = base - 31; y < base; y++) {
+    const inset = Math.max(0, base - 26 - y)
+    if (inset * 2 >= gw) continue
+    p(gx + inset, y, gw - inset * 2, 1, glass(y))
+    p(gx + inset, y, 1, 1, green)
+    p(gx + gw - 1 - inset, y, 1, 1, green)
+  }
+  for (let mx = gx + 3; mx < gx + gw - 1; mx += 3) p(mx, base - 26, 1, 26, green)
+  for (let my = base - 22; my < base; my += 5) p(gx, my, gw, 1, green)
+  // the arrow, white, high on the glass
+  const ax = gx + gw / 2
+  p(ax, base - 25, 1, 1, '#ffffff')
+  p(ax - 1, base - 24, 1, 1, '#ffffff')
+  p(ax + 1, base - 24, 1, 1, '#ffffff')
+  p(ax - 2, base - 23, 1, 1, '#ffffff')
+  p(ax + 2, base - 23, 1, 1, '#ffffff')
+  return 40
+}
+
+function skyline(p, artW, night) {
+  const base = 46
+  // a haze of taller blocks far behind, so the street never shows bare sky in its gaps
+  for (let x = -6, i = 0; x < artW; i++) {
+    const h = hash(i * 2713 + 11)
+    const w = 14 + (h % 18)
+    const top = base - 26 - ((h >>> 6) % 12)
+    p(x, top, w, base - top, night ? '#1b2a4a' : '#a9c4d6')
+    if (night) for (let k = 0; k < w / 3; k++) if ((hash(h + k) & 7) === 0) p(x + 2 + ((hash(h + k) >>> 4) % (w - 3)), top + 3 + ((hash(h + k) >>> 9) % (base - top - 5)), 1, 1, '#c9b56a')
+    x += w
+  }
+  // Strijp-S landmarks among the ordinary buildings, where the street has room for them
+  // and Avular's own building on the left with them, so a narrow panel still shows all three
+  const marks = [
+    { at: Math.round(artW * 0.3), draw: avular },
+    { at: Math.round(artW * 0.4), draw: klokgebouw }
+  ]
+  if (artW > 320) marks.push({ at: Math.round(artW * 0.85), draw: trudo })
+  for (let x = -4, i = 0; x < artW; i++) {
+    const m = marks.find((m) => !m.done && x >= m.at - 24)
+    if (m) {
+      m.done = true
+      x += m.draw(p, x, base, night) + 1
+      continue
+    }
+    const h = hash(i * 7907 + 5)
+    const w = 18 + (h % 22)
+    const height = 12 + ((h >>> 5) % 20)
+    const f = FACADES[(h >>> 10) % FACADES.length]
+    facade(p, x, base - height, w, height, f, h, night)
+    x += w + ((h >>> 14) % 4 === 0 ? 3 : 0)
+  }
+}
+
+function facade(p, x, y, w, h, f, seed, night) {
+  const c = shade(night)
+  p(x, y, w, h, c(f.wall))
+  if (f.brick) for (let r = y + 2; r < y + h; r += 2) p(x, r, w, 1, c(f.line))
+  else p(x + w - 2, y, 2, h, c(f.line)) // the shaded return
+  // the roof: a cornice, a water tower, a stair house, an air-conditioning unit or nothing at all
+  const roof = (seed >>> 17) % 5
+  p(x - 1, y, w + 2, 2, c(f.trim))
+  if (roof === 0 && f.brick && w > 22) {
+    // a factory chimney, Ketelhuis style, with its white band near the top
+    const tx = x + 3 + ((seed >>> 3) % (w - 10))
+    p(tx, y - 14, 4, 14, c('#9c4a35'))
+    p(tx + 3, y - 14, 1, 14, c('#7f3b2a'))
+    p(tx, y - 12, 4, 1, c('#e8e1d4'))
+    p(tx - 1, y - 15, 6, 1, c('#5e4a44'))
+  } else if (roof === 1) {
+    const sx = x + w - 10
+    p(sx, y - 4, 7, 4, c(f.line))
+    p(sx + 2, y - 3, 2, 3, c(f.glass))
+  } else if (roof === 2) {
+    // a rooftop air-conditioning unit with its fan
+    const ax = x + 2 + ((seed >>> 4) % Math.max(1, w - 10))
+    p(ax, y - 3, 6, 3, c('#a7adb0'))
+    p(ax + 1, y - 2, 2, 1, c('#5f666a'))
+    p(ax, y - 3, 6, 1, c('#c4c9cb'))
+  } else if (roof >= 3 && f.brick && h < 22) {
+    // a Strijp-T hall: a sawtooth roof, each tooth glazed on its steep side
+    for (let sx = x; sx < x + w - 5; sx += 6) {
+      for (let k = 0; k < 5; k++) p(sx + k, y - 1 - Math.floor(k * 0.8), 6 - k, 1, c('#6e6a66'))
+      p(sx + 5, y - 5, 1, 5, night ? '#e9c070' : c('#8fb0c4'))
+    }
+  } else if (roof === 3 && w > 24) {
+    p(x + 2, y - 3, w - 4, 3, c(f.wall)) // a set-back top floor
+    p(x + 1, y - 3, w - 2, 1, c(f.trim))
+  }
+  // windows: a rhythm of its own, some tall, some wide, a band of trim on a few
+  const tall = (seed >>> 20) & 1
+  const ww = tall ? 2 : 3 + ((seed >>> 21) & 1)
+  const wh = tall ? 4 : 2
+  const gx = ww + 2 + ((seed >>> 22) % 3)
+  const gy = wh + 2 + ((seed >>> 24) & 1)
+  const band = (seed >>> 25) % 3 === 0
+  const cols = Math.max(1, Math.floor((w - 5) / gx))
+  const left = x + Math.floor((w - (cols * gx - (gx - ww))) / 2)
+  let n = 0
+  for (let wy = y + 4; wy + wh < y + h - 1; wy += gy) {
+    if (band) p(x, wy + wh, w, 1, c(f.trim))
+    for (let k = 0; k < cols; k++, n++) {
+      const lit = night && (hash(seed + n * 31) % 100) < 38
+      p(left + k * gx, wy, ww, wh, lit ? f.lit : night ? '#16203a' : f.glass)
+      if (!night && wh > 2) p(left + k * gx, wy, 1, 1, '#9fb4c4') // a glint
+    }
+  }
+  // a shop front at street level on some
+  if (h > 16 && (seed >>> 27) % 3 === 0) {
+    p(x + 2, y + h - 4, w - 4, 4, night ? '#e9c070' : c('#6f7d86'))
+    p(x + 1, y + h - 5, w - 2, 1, c((seed >>> 29) & 1 ? '#3f7a5b' : '#9b3f3a'))
+  }
+}
+
+/**
+ * A birch: white bark with its dark marks, a few branches and a crown going yellow. No two alike:
+ * a tall slender one still mostly green, and a shorter leaning pair with a wide golden crown.
+ */
+const BIRCHES = [
+  { top: 16, cy: 19, rx: 9, ry: 14, lean: 0, twin: false, gold: 0.35, branches: [[1, 30, 5], [-1, 26, 4], [1, 21, 3], [-1, 36, 4]] },
+  { top: 28, cy: 27, rx: 15, ry: 11, lean: 1, twin: true, gold: 0.8, branches: [[1, 33, 7], [-1, 31, 6], [1, 38, 4]] }
+]
+
+function birch(p, tx, night, kind = 0) {
+  const b = BIRCHES[kind % BIRCHES.length]
+  const bark = night ? '#a9b2c4' : '#f1f0ea'
+  const mark = night ? '#2a3550' : '#4b4a5e'
+  const gold = night ? ['#7e7a46', '#8a7a40'] : ['#d6c04a', '#e2b23c', '#c7a23a']
+  const green = night ? ['#55663e', '#4a5a38'] : ['#9bb54c', '#86a443']
+  // a trunk that leans one pixel every few rows when the tree has a lean
+  const trunk = (x0, top, w) => {
+    for (let y = top; y < 61; y++) {
+      const x = x0 + (b.lean ? Math.floor((61 - y) / 9) : 0)
+      p(x, y, w, 1, bark)
+      if (hash(x0 * 7 + y) % 6 === 0) p(x + (y & 1) * (w - 1), y, 1, 1, mark)
+    }
+  }
+  if (b.twin) trunk(tx - 4, b.top + 8, 1) // its thinner sibling
+  trunk(tx, b.top, 2)
+  const cx = tx + (b.lean ? Math.floor((61 - b.cy) / 9) : 0)
+  for (const [dir, by, len] of b.branches) {
+    const bx = tx + (b.lean ? Math.floor((61 - by) / 9) : 0) + (dir > 0 ? 2 : -1)
+    for (let k = 0; k < len; k++) p(bx + dir * k, by - (k >> 1), 1, 1, bark)
+  }
+  // the crown: an oval of its own size, gold or green by the tree, its shaded side to the right
+  for (let i = 0; i < 300; i++) {
+    const h = hash(tx * 97 + i)
+    const dx = (h % (b.rx * 2 + 1)) - b.rx
+    const dy = ((h >>> 8) % (b.ry * 2 + 1)) - b.ry
+    if ((dx * dx) / (b.rx * b.rx) + (dy * dy) / (b.ry * b.ry) > 1) continue
+    const pick = ((h >>> 16) % 100) / 100 < b.gold ? gold : green
+    const shaded = (dx > b.rx / 3 || dy > b.ry / 2) && (h >>> 24) % 3
+    p(cx + dx, b.cy + dy, 2, 2, shaded ? pick[pick.length - 1] : pick[(h >>> 20) % pick.length])
+  }
+  for (let i = 0; i < 6; i++) {
+    const h = hash(tx * 31 + i) // a few leaves already let go
+    p(tx - 12 + (h % 26), 52 + ((h >>> 8) % 11), 1, 1, gold[(h >>> 16) % gold.length])
+  }
 }
 
 /** Polished concrete: soft blotches and a sheen from the windows. */
