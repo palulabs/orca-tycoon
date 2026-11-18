@@ -436,8 +436,10 @@ function walkOn(who, speed) {
  * drawn doing one thing at another thing's place; until then it waits where it is (`planning`).
  * Returns the walk, or undefined while it sits at its desk or once it is back there.
  *
- * With `teleport` (`{ out, in }`, frames each way), an agent called back from its spot does not walk:
- * it fades out there (`teleport-out`), then appears at its desk (`teleport-in`), counting `warp`.
+ * With `teleport` (`{ out, in, inCommons }`, frames each way), an agent called back from its spot
+ * does not walk: it fades out there (`teleport-out`), then appears at its desk (`teleport-in`),
+ * counting `warp`. So does one called back on its way to a spot, where `inCommons(w)` says it
+ * stands in the commons already: only one still among the desks walks back.
  * Called out again meanwhile, it walks to the spot from wherever it stands.
  */
 export function breakWalk(w, { spot, activity, home, primed }, route, speed, teleport = null) {
@@ -458,7 +460,7 @@ export function breakWalk(w, { spot, activity, home, primed }, route, speed, tel
   } else if (spot) {
     w.planning = false
     w.activity = activity
-  } else if (teleport && w.mode === 'away') {
+  } else if (teleport && (w.mode === 'away' || (w.mode === 'out' && teleport.inCommons?.(w)))) {
     Object.assign(w, { path: [], mode: 'teleport-out', warp: 0, activity: null, planning: false })
     return w
   } else if (w.mode !== 'back') {
@@ -472,6 +474,41 @@ export function breakWalk(w, { spot, activity, home, primed }, route, speed, tel
     w.left = w.spot.left ?? false
   }
   return w.mode === 'back' ? undefined : w
+}
+
+/** How long a finished agent can stay at its desk before its break, in seconds; the button cycles them. */
+export const DESK_STAYS = [0, 30, 60, 120, 300]
+export const DEFAULT_DESK_STAY = 60
+
+/** The saved stay as one of the choices; anything else (nothing saved, an old value) is the default. */
+export function deskStayOf(saved) {
+  const n = saved === null || saved === undefined || saved === '' ? NaN : Number(saved)
+  return DESK_STAYS.includes(n) ? n : DEFAULT_DESK_STAY
+}
+
+/** The choice after `stay`, round again from the last. */
+export const nextDeskStay = (stay) => DESK_STAYS[(DESK_STAYS.indexOf(stay) + 1) % DESK_STAYS.length]
+
+/** A stay as the button reads it: `0s`, `30s`, `1m`. */
+export const deskStayLabel = (stay) => (stay % 60 === 0 && stay > 0 ? `${stay / 60}m` : `${stay}s`)
+
+/**
+ * Whether an agent that finished at `doneAt` is still at its desk at `now`. `doneAt` is when the
+ * panel saw it finish there; none (it was done already when the panel opened, or it finished out
+ * on a break) means it does not wait.
+ */
+export function staysAtDesk(doneAt, now, stay) {
+  return doneAt !== undefined && now - doneAt < stay * 1000
+}
+
+/**
+ * Whether the person is drawn this frame. The portal owns the last frames of a teleport out and
+ * the first frames of a teleport in; anyone walking or standing (who never counted `warp`) shows.
+ */
+export function walkerShown(w) {
+  if (w.mode === 'teleport-out') return w.warp < 5
+  if (w.mode === 'teleport-in') return w.warp >= 3
+  return true
 }
 
 /** A frame of the teleport home: out at the spot, then in at the desk; undefined once it is there. */

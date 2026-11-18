@@ -615,12 +615,15 @@ function chairFront(q, cx, y) {
   q(cx + 6, y - 11, 2, 1, '#6b6a75')
 }
 
-/** A front-row agent in an office chair, back to you, looking at the screen. */
-function frontAgent(p, cx, y, staff, t, away) {
+/**
+ * A front-row agent in an office chair, back to you, looking at the screen. `awake` is one that
+ * just finished and sits up ready for the next task, where it would otherwise doze.
+ */
+function frontAgent(p, cx, y, staff, t, away, awake = false) {
   if (away || !staff) return ol(p, (q) => chairBack(q, cx, y - 5)) // empty: pushed in toward the desk
   const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
-  const sleepy = s === 'done' || s === 'idle'
+  const sleepy = (s === 'done' || s === 'idle') && !awake
   const facing = s === 'waiting'
   const bob = s === 'working' ? t % 2 : 0
   const dy = sleepy ? 2 : 0
@@ -661,18 +664,18 @@ function frontAgent(p, cx, y, staff, t, away) {
     chairBack(q, cx, y)
     if (festive()) festiveHeadgear(q, cx - 3, facing ? y + 4 : y + 4 + dy - bob, costume, !facing)
   })
-  marks(p, cx, y + 5, s, t, facing)
+  marks(p, cx, y + 5, s, t, facing, awake)
   if (s === 'monitoring' && t % 6 < 4) p(cx + 5 + (t % 2), y + 7 - ((t >> 1) % 2), 1, 1, C.steam)
 }
 
 /** A back-row agent behind the desk, facing you over the monitor. */
-function backAgent(p, cx, y, staff, t, away) {
+function backAgent(p, cx, y, staff, t, away, awake = false) {
   // an empty chair is pushed in under the desk, only the top of its back showing; a taken one is out
   ol(p, (q) => chairFront(q, cx, away || !staff ? y + 9 : y))
   if (away || !staff) return
   const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
-  const sleepy = s === 'done' || s === 'idle'
+  const sleepy = (s === 'done' || s === 'idle') && !awake
   const bob = s === 'working' ? t % 2 : 0
   const dy = sleepy ? 3 : 0
   ol(p, (q) => {
@@ -704,7 +707,7 @@ function backAgent(p, cx, y, staff, t, away) {
     }
     if (festive()) festiveHeadgear(q, cx - 3, y - 14 + dy - bob, costume)
   })
-  marks(p, cx, y - 14, s, t, s === 'waiting')
+  marks(p, cx, y - 14, s, t, s === 'waiting', awake)
   if (s === 'monitoring' && t % 6 < 4) p(cx - 7 + (t % 2), y - 10 - ((t >> 1) % 2), 1, 1, C.steam)
 }
 
@@ -716,10 +719,10 @@ function cap(q, x, y, costume) {
 }
 
 /** The ? over someone waiting, the ! over someone stuck, the z over someone dozing. */
-function marks(p, cx, head, s, t, waiting) {
+function marks(p, cx, head, s, t, waiting, awake = false) {
   if (waiting && (t >> 2) % 2) ol(p, (q) => glyph(q, '?', cx - 1, head - 8, C.amber))
   if (s === 'blocked') ol(p, (q) => glyph(q, '!', cx - 1, head - 8, C.red))
-  if (s === 'done' || s === 'idle') {
+  if ((s === 'done' || s === 'idle') && !awake) {
     const z = t % 16
     if (z < 12) ol(p, (q) => glyph(q, 'z', cx + 4 + (z >> 2), head - 3 - (z >> 2), C.white))
   }
@@ -779,7 +782,7 @@ function island(p, g, isl, world) {
     for (let i = 0; i < 3; i++) {
       const seat = staffed(cells[i])
       kicks(seat)
-      backAgent(p, x + i * IW + HALF, y, seat?.staff, t, seat && world.away(seat))
+      backAgent(p, x + i * IW + HALF, y, seat?.staff, t, seat && world.away(seat), Boolean(seat && world.awake?.(seat)))
     }
   }
   shadow(p, x + 1, y + D2 + 13, W, 3)
@@ -808,7 +811,7 @@ function island(p, g, isl, world) {
     const seat = staffed(cell)
     if (cell) monitorFront(p, x + i * IW + MON_X, y + row0 - 4, seat, t)
     if (cell) deskProp(p, x + i * IW, y + row0 + 5, cell.unit ?? cell.key)
-    frontAgent(p, x + i * IW + HALF, y + row0 + 6, seat?.staff, t, seat && world.away(seat))
+    frontAgent(p, x + i * IW + HALF, y + row0 + 6, seat?.staff, t, seat && world.away(seat), Boolean(seat && world.awake?.(seat)))
     kicks(seat)
   }
 }
@@ -1566,7 +1569,8 @@ function background(layout) {
 
 /**
  * Draws the office. `world` is the panel's live state: `tick`; `away(seat)`, whether the agent is
- * up and about; `seatedAt(seat)`, the specialists on its stools; `people`, everyone standing or
+ * up and about; `awake(seat)`, whether it just finished and sits up at its desk instead of dozing;
+ * `seatedAt(seat)`, the specialists on its stools; `people`, everyone standing or
  * walking, each with `{ key, x, y, base, kind, paint(p) }`; `palu`, his box and a painter; and
  * `drawText` for the signs and nameplates at screen resolution.
  */
@@ -1628,13 +1632,23 @@ export function drawLoft(ctx, layout, world) {
   }
   scene.push({ base: c.bowls.y + 4, paint: () => world.bowls(p, c.bowls) })
   for (const room of layout.rooms) for (const d of room.drawers ?? []) scene.push({ base: d.base, paint: () => drawers(p, d, t) })
-  for (const m of world.people) if (m.kind !== 'booth') scene.push({ base: m.base, paint: () => m.paint(p) })
+  // A walker crossing a room must stay visible while it passes behind the static island/curtain
+  // layers. Settled people remain in the normal depth-sorted scene, so sofas and tables still
+  // occlude them naturally once they arrive.
+  const moving = []
+  for (const m of world.people) {
+    if (m.kind === 'booth') continue
+    if (m.moving) moving.push(m)
+    else scene.push({ base: m.base, paint: () => m.paint(p) })
+  }
   if (world.palu) scene.push({ base: world.palu.base - 0.5, paint: () => world.palu.paint(p) })
   scene.sort((a, b) => a.base - b.base)
   // `view` is the band of floor rows the panel shows; a thing standing well outside it cannot
   // reach into it, so a big office only paints what is on screen
   const { view } = world
   for (const item of scene) if (!view || (item.base > view.y0 - 8 && item.base < view.y1 + 90)) item.paint()
+  moving.sort((a, b) => a.base - b.base)
+  for (const m of moving) m.paint(p)
 
   const s = layout.scale
   // a sign or nameplate is a line of text around its row: one well off screen is not measured

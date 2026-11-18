@@ -186,11 +186,14 @@ export function desk(p, w) {
   p(w - 3, 20, 2, 2, C.woodDark)
 }
 
-/** Chair and person, drawn before the desk so the desk hides their lap. */
-export function person(p, staff, t, away = false) {
+/**
+ * Chair and person, drawn before the desk so the desk hides their lap. `awake` is one that just
+ * finished and sits up at its desk ready for the next task, where it would otherwise doze.
+ */
+export function person(p, staff, t, away = false, awake = false) {
   const { skin, hair, shirt, costume } = look(staff.id || 'x')
   const s = staff.state
-  const sleepy = s === 'done' || s === 'idle'
+  const sleepy = (s === 'done' || s === 'idle') && !awake
   const bob = s === 'working' ? t % 2 : 0
   const dy = sleepy ? 2 : 0
   // chair back
@@ -234,7 +237,7 @@ export function person(p, staff, t, away = false) {
  * Orca server works on a thin client: a pale terminal and a slim box on the desk beside it,
  * whose link light blinks while the far machine is busy.
  */
-export function workstation(p, staff, t, away = false, remote = false) {
+export function workstation(p, staff, t, away = false, remote = false, awake = false) {
   const s = staff.state
   const { skin } = look(staff.id || 'x')
   // monitor
@@ -280,7 +283,7 @@ export function workstation(p, staff, t, away = false, remote = false) {
     if (t % 6 < 4) p(16 + (t % 2), 12 - ((t >> 1) % 2), 1, 1, C.steam)
   }
   // overhead marks
-  if ((s === 'done' || s === 'idle') && !away) {
+  if ((s === 'done' || s === 'idle') && !away && !awake) {
     const z = t % 16
     if (z < 12) glyph(p, 'z', 14 + (z >> 2), 2 - (z >> 2), C.white)
   } else if (s === 'waiting' && !away) {

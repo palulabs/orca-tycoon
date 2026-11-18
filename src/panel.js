@@ -50,7 +50,19 @@ import {
   workstation
 } from './sprites.js'
 import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing } from './loft.js'
-import { breakWalk, onTheMove, routePlanner, stepToward, visitorWalk, walkGrid } from './walking.js'
+import {
+  breakWalk,
+  deskStayLabel,
+  deskStayOf,
+  nextDeskStay,
+  onTheMove,
+  routePlanner,
+  staysAtDesk,
+  stepToward,
+  visitorWalk,
+  walkGrid,
+  walkerShown
+} from './walking.js'
 
 const POLL_MS = 3000
 const FRAME_MS = 125
@@ -148,6 +160,16 @@ try {
 }
 const loft = () => layoutTheme === 'loft'
 
+// How long an agent that just finished stays at its desk before it walks to the commons, in
+// seconds. The button beside the appearance switch cycles the choices; the pick is kept.
+const STAY_KEY = 'office-tycoon.desk-stay'
+let deskStay = deskStayOf(null)
+try {
+  deskStay = deskStayOf(localStorage.getItem(STAY_KEY))
+} catch {
+  // no storage in this frame: the default for this session
+}
+
 function applyDark() {
   document.documentElement.dataset.dark = String(dark)
   document.body?.setAttribute('data-dark', String(dark))
@@ -191,6 +213,7 @@ let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [],
 let selected = null // seat key, or a specialist's visitor key (`seat key|specialist id`)
 let tick = 0
 const lastState = new Map() // seat key -> state, to pop a bubble when it changes
+const doneAt = new Map() // seat key -> when the panel saw its agent finish at its desk
 const bubbles = new Map() // seat key -> { text, until }
 const walkers = new Map() // seat key -> { x, y, path, mode: 'out' | 'away' | 'back' | 'teleport-*' }
 const visitors = new Map() // specialist key -> { spec, x, y, path, mode: 'in' | 'seated' | 'out' }
@@ -746,7 +769,10 @@ function slotOf(key, now) {
 function assignBreaks(common) {
   const now = Date.now()
   const pools = { lounge: common.sofa, coffee: common.spots, foosball: common.foos, booth: common.booths, table: common.table ?? [] }
-  const onBreak = layout.seats.filter((s) => AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state))
+  // one that just finished stays at its desk a while first
+  const onBreak = layout.seats.filter(
+    (s) => (AWAY_STATES.has(s.staff.state) || LOUNGE_STATES.has(s.staff.state)) && !staysAtDesk(doneAt.get(s.key), now, deskStay)
+  )
   const onKeys = new Set(onBreak.map((s) => s.key))
   for (const key of assigned.keys()) if (!onKeys.has(key)) assigned.delete(key)
 
@@ -803,6 +829,13 @@ function assignBreaks(common) {
   return spotOf
 }
 
+/** Whether someone at `at` (the top left of its 9 x 16 figure) has its feet in the commons. */
+function inCommons(common, at) {
+  const x = at.x + 4
+  const feet = at.y + 15
+  return x >= common.x && x <= common.x + common.w && feet >= common.y && feet <= common.y + common.h
+}
+
 function stepWalkers() {
   const common = layout.common
   if (!common) return
@@ -816,7 +849,7 @@ function stepWalkers() {
       { spot: spotOf.get(seat.key), activity: activityOf.get(seat.key) ?? null, home: homeOf(seat), primed: scenePrimed },
       (from, to) => walkPath(`walk:${seat.key}`, from, to),
       WALK_SPEED,
-      { out: TELEPORT_OUT_FRAMES, in: TELEPORT_IN_FRAMES }
+      { out: TELEPORT_OUT_FRAMES, in: TELEPORT_IN_FRAMES, inCommons: (at) => inCommons(common, at) }
     )
     if (w) walkers.set(seat.key, w)
     else walkers.delete(seat.key)
@@ -1262,9 +1295,14 @@ function drawPalu(base = painter(ctx)) {
   else paluLie(at, tick, true, palu.restLeft)
 }
 
+/** Whether the seat's agent just finished and sits up at its desk, ready for the next task. */
+function awaitingTask(seat) {
+  return seat.staff.state === 'done' && staysAtDesk(doneAt.get(seat.key), Date.now(), deskStay)
+}
+
 function drawSeat(seat) {
   const p = painter(ctx, seat.x, seat.y)
-  person(p, seat.staff, tick, walkers.has(seat.key))
+  person(p, seat.staff, tick, walkers.has(seat.key), awaitingTask(seat))
 }
 
 function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left', size = 12, chip = null } = {}) {
@@ -1363,7 +1401,15 @@ function loftPeople() {
     const x = Math.round(w.x)
     const y = Math.round(w.y)
     const kind = w.mode === 'away' ? w.activity?.kind ?? null : null
-    const m = { key: seat.key, kind, spot: w.spot, base: y + 15 }
+    const m = {
+      key: seat.key,
+      kind,
+      spot: w.spot,
+      base: y + 15,
+      // Keep a worker visible while crossing room furniture and curtain lines. Once it reaches
+      // the commons, normal depth sorting resumes so furniture can occlude it naturally.
+      moving: w.path.length > 0 || w.mode.startsWith('teleport')
+    }
     if (kind === 'lounge') {
       m.base = (w.spot.sofa ? w.spot.sofa.y + 13 : y + 13) + 0.5
       m.paint = (p) => lounging(p, x, y, seat.staff, tick, w.activity.pose)
@@ -1382,8 +1428,7 @@ function loftPeople() {
     else m.paint = (p) => {
       // Let the portal own the last departure frames and first arrival frames. The hard cut makes
       // the disappearance/reappearance readable without introducing opacity or a screen-wide flash.
-      const visible = w.mode === 'teleport-out' ? w.warp < 5 : w.mode === 'teleport-in' ? w.warp >= 3 : true
-      if (visible) standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
+      if (walkerShown(w)) standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
       if (w.mode.startsWith('teleport')) teleportEffect(p, x, y, w.warp, w.mode)
     }
     people.push(m)
@@ -1392,7 +1437,13 @@ function loftPeople() {
     if (v.mode === 'seated' || v.wait > 0) continue
     const x = Math.round(v.x)
     const y = Math.round(v.y)
-    people.push({ key, kind: null, base: y + 15, paint: (p) => standing(p, x, y, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)) })
+    people.push({
+      key,
+      kind: null,
+      base: y + 15,
+      moving: onTheMove(v),
+      paint: (p) => standing(p, x, y, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role))
+    })
   }
   return people
 }
@@ -1408,6 +1459,7 @@ function drawLoftScene() {
   drawLoft(ctx, layout, {
     tick,
     away: (seat) => walkers.has(seat.key),
+    awake: awaitingTask,
     seatedAt: (seat) =>
       [...visitors]
         .filter(([key, v]) => v.mode === 'seated' && key.startsWith(`${seat.key}|`))
@@ -1445,7 +1497,7 @@ function draw() {
   // desks: people first, then the desk over their laps, then monitors and hands
   for (const seat of layout.seats) drawSeat(seat)
   for (const seat of layout.seats) desk(painter(ctx, seat.x - 2, seat.y), DESK_W)
-  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key), Boolean(seat.desk.environment))
+  for (const seat of layout.seats) workstation(painter(ctx, seat.x, seat.y), seat.staff, tick, walkers.has(seat.key), Boolean(seat.desk.environment), awaitingTask(seat))
   // stools at the end of each desk, then whoever is sitting on them
   for (const seat of layout.seats) for (const at of seat.stools) stool(painter(ctx, at.x, at.y))
   for (const v of visitors.values()) {
@@ -1637,9 +1689,15 @@ function noteChanges() {
       else if (state === 'waiting') text = 'Need you!'
       else if (state === 'blocked') text = 'Stuck!'
       if (text) bubbles.set(seat.key, { text, until: now + BUBBLE_MS, kind: state === 'waiting' ? 'waiting' : 'speech' })
+      // Finished at its desk: it stays there a while. One that finished out on a break (it was
+      // waiting on a background job) is not called back to its desk only to leave again.
+      if (state === 'done' && !walkers.has(seat.key)) doneAt.set(seat.key, now)
     }
+    if (state !== 'done') doneAt.delete(seat.key)
     lastState.set(seat.key, state)
   }
+  const seated = new Set(layout.seats.map((s) => s.key))
+  for (const key of doneAt.keys()) if (!seated.has(key)) doneAt.delete(key)
   primed = true
 }
 
@@ -1841,6 +1899,16 @@ function setDark(next) {
   draw()
 }
 
+function setDeskStay(next) {
+  deskStay = deskStayOf(next)
+  try {
+    localStorage.setItem(STAY_KEY, String(deskStay))
+  } catch {
+    // kept for this session only
+  }
+  renderThemes()
+}
+
 function renderThemes() {
   for (const button of document.querySelectorAll('#themes button')) {
     button.setAttribute('aria-pressed', String(button.dataset.layout === layoutTheme))
@@ -1852,10 +1920,22 @@ function renderThemes() {
     darkButton.setAttribute('aria-label', dark ? 'Use light appearance' : 'Use dark appearance')
     darkButton.setAttribute('title', dark ? 'Use light appearance' : 'Use dark appearance')
   }
+  const stayButton = document.querySelector('#desk-stay button')
+  if (stayButton) {
+    const label = deskStayLabel(deskStay)
+    const hint =
+      deskStay > 0
+        ? `A finished agent stays at its desk for ${label} before its break. Click to change.`
+        : 'A finished agent leaves its desk for its break at once. Click to change.'
+    stayButton.textContent = `⏱ ${label}`
+    stayButton.setAttribute('aria-label', hint)
+    stayButton.setAttribute('title', hint)
+  }
 }
 
 for (const button of document.querySelectorAll('#themes button')) button.addEventListener('click', () => setLayout(button.dataset.layout))
 document.querySelector('#dark-toggle button')?.addEventListener('click', () => setDark(!dark))
+document.querySelector('#desk-stay button')?.addEventListener('click', () => setDeskStay(nextDeskStay(deskStay)))
 renderThemes()
 
 async function poll() {

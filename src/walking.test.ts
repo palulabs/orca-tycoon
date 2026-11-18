@@ -2,7 +2,25 @@
 // but never takes more than its share of a frame, and agents that only change what they do once
 // their way there is found.
 import { assert, test } from 'orca/testing'
-import { BLOCKED_COST, LONG_SEARCH, SEARCH_SETUP, TURN_COST, breakWalk, onTheMove, routePlanner, routeSearch, visitorWalk, walkGrid } from './walking.js'
+import {
+  BLOCKED_COST,
+  DEFAULT_DESK_STAY,
+  DESK_STAYS,
+  LONG_SEARCH,
+  SEARCH_SETUP,
+  TURN_COST,
+  breakWalk,
+  deskStayLabel,
+  deskStayOf,
+  nextDeskStay,
+  onTheMove,
+  routePlanner,
+  routeSearch,
+  staysAtDesk,
+  visitorWalk,
+  walkGrid,
+  walkerShown
+} from './walking.js'
 
 type Box = [number, number, number, number]
 
@@ -296,6 +314,57 @@ test('an agent moving to another spot keeps its spot and what it does there unti
   assert.deepEqual(w.path, [{ x: 80, y: 40 }])
 })
 
+test('an agent shows all the way to its spot, and hides only inside the teleport', () => {
+  const home = { x: 30, y: 10 }
+  const spot = { x: 10, y: 50 }
+  const route = () => [{ x: 10, y: 50 }]
+  const frames = { out: 8, in: 8 }
+  // a first walk never counted `warp`: it must not be read as a teleport frame
+  const w = breakWalk(undefined, { spot, activity: { kind: 'coffee' }, home, primed: true }, route, 1, frames)
+  assert.equal(w.mode, 'out')
+  assert.equal(walkerShown(w), true)
+  while (w.mode === 'out') breakWalk(w, { spot, activity: { kind: 'coffee' }, home, primed: true }, route, 4, frames)
+  assert.equal(w.mode, 'away')
+  assert.equal(walkerShown(w), true)
+
+  const shown: Record<string, boolean[]> = { 'teleport-out': [], 'teleport-in': [] }
+  let back = breakWalk(w, { spot: undefined, activity: null, home, primed: true }, route, 4, frames)
+  while (back) {
+    shown[back.mode].push(walkerShown(back))
+    back = breakWalk(back, { spot: undefined, activity: null, home, primed: true }, route, 4, frames)
+  }
+  assert.deepEqual(shown['teleport-out'], [true, true, true, true, true, false, false, false])
+  assert.deepEqual(shown['teleport-in'], [false, false, false, true, true, true, true, true, true])
+
+  // called out again after a teleport, with a stale `warp` left on the walk
+  const again = breakWalk({ ...home, path: [], mode: 'teleport-in', warp: 1, spot, activity: null }, { spot, activity: { kind: 'coffee' }, home, primed: true }, route, 1, frames)
+  assert.equal(again.mode, 'out')
+  assert.equal(walkerShown(again), true)
+})
+
+test('a finished agent stays at its desk for the chosen time, a minute unless changed', () => {
+  assert.equal(DEFAULT_DESK_STAY, 60)
+  // seen finishing at its desk: there for the stay, gone once it is over
+  assert.equal(staysAtDesk(1000, 1000, 60), true)
+  assert.equal(staysAtDesk(1000, 60_999, 60), true)
+  assert.equal(staysAtDesk(1000, 61_000, 60), false)
+  // no stay chosen, or never seen finishing at its desk: off at once
+  assert.equal(staysAtDesk(1000, 1000, 0), false)
+  assert.equal(staysAtDesk(undefined, 1000, 60), false)
+
+  // what is saved: one of the choices, else the default (0 is a choice, not "nothing saved")
+  assert.equal(deskStayOf(null), 60)
+  assert.equal(deskStayOf(''), 60)
+  assert.equal(deskStayOf('45'), 60)
+  assert.equal(deskStayOf('0'), 0)
+  assert.equal(deskStayOf('300'), 300)
+  // the button goes through every choice and round again
+  const seen = [60]
+  while (seen.length <= DESK_STAYS.length) seen.push(nextDeskStay(seen[seen.length - 1]))
+  assert.deepEqual(seen, [60, 120, 300, 0, 30, 60])
+  assert.deepEqual(DESK_STAYS.map(deskStayLabel), ['0s', '30s', '1m', '2m', '5m'])
+})
+
 test('an agent gets up from its desk, or heads back to it, only once the way is found', () => {
   const spot = { x: 10, y: 50 }
   const home = { x: 30, y: 10 }
@@ -338,6 +407,41 @@ test('with teleport, an agent called back from a break fades out at its spot and
   assert.equal(breakWalk(w, back, route, 0, teleport), w)
   assert.equal(breakWalk(w, back, route, 0, teleport), w)
   assert.equal(breakWalk(w, back, route, 0, teleport), undefined)
+})
+
+test('called back on its way to a spot, an agent teleports from the commons and walks from among the desks', () => {
+  const home = { x: 30, y: 10 }
+  const spot = { x: 30, y: 90 }
+  const teleport = { out: 2, in: 2, inCommons: (at: { y: number }) => at.y >= 50 }
+  const route = (from: { x: number; y: number }, to: { x: number; y: number }) => [{ ...to }]
+  const out = { spot, activity: { kind: 'coffee' }, home, primed: true }
+  const back = { spot: undefined, activity: null, home, primed: true }
+
+  // still among the desks: it turns round and walks
+  const near = breakWalk(undefined, out, route, 10, teleport)
+  breakWalk(near, out, route, 10, teleport)
+  assert.equal(near.mode, 'out')
+  assert.equal(near.y < 50, true)
+  breakWalk(near, back, route, 10, teleport)
+  assert.equal(near.mode, 'back')
+
+  // in the commons, not yet at its spot: it goes from where it stands
+  const far = breakWalk(undefined, out, route, 10, teleport)
+  while (far.y < 60) breakWalk(far, out, route, 10, teleport)
+  assert.equal(far.mode, 'out')
+  const at = [far.x, far.y]
+  breakWalk(far, back, route, 10, teleport)
+  assert.equal(far.mode, 'teleport-out')
+  assert.deepEqual([far.x, far.y], at)
+  assert.deepEqual(far.path, [])
+
+  // moving from one spot to another in the commons
+  const moved = breakWalk(undefined, { ...out, primed: false }, route, 10, teleport)
+  assert.equal(moved.mode, 'away')
+  breakWalk(moved, { ...out, spot: { x: 80, y: 90 } }, route, 10, teleport)
+  assert.equal(moved.mode, 'out')
+  breakWalk(moved, back, route, 10, teleport)
+  assert.equal(moved.mode, 'teleport-out')
 })
 
 test('called out again mid-teleport, the agent walks to its spot from where it stands', () => {

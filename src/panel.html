@@ -94,6 +94,16 @@
         font-size: 14px;
         line-height: 1;
       }
+      /* How long a finished agent stays at its desk: one button that cycles the choices. */
+      .themes.stay {
+        margin-left: 2px;
+      }
+      .themes.stay button {
+        height: 22px;
+        padding: 0 6px;
+        line-height: 1;
+        white-space: nowrap;
+      }
       .control-label {
         color: var(--panel-muted, var(--orca-muted-foreground, #9a97a8));
         align-self: center;
@@ -204,6 +214,9 @@
       </div>
       <div class="themes icon-toggle" id="dark-toggle" role="group" aria-label="Appearance">
         <button type="button" aria-pressed="false" aria-label="Use dark appearance" title="Use dark appearance">☀</button>
+      </div>
+      <div class="themes stay" id="desk-stay" role="group" aria-label="Desk stay after finishing">
+        <button type="button">⏱ 1m</button>
       </div>
       <div class="themes festive" id="christmas" hidden>
         <button type="button" aria-pressed="false" title="Christmas decorations">🎄</button>
