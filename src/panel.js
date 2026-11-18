@@ -1382,7 +1382,7 @@ function loftPeople() {
     else m.paint = (p) => {
       // Let the portal own the last departure frames and first arrival frames. The hard cut makes
       // the disappearance/reappearance readable without introducing opacity or a screen-wide flash.
-      const visible = w.mode === 'teleport-out' ? w.warp < 5 : w.warp >= 3
+      const visible = w.mode === 'teleport-out' ? w.warp < 5 : w.mode === 'teleport-in' ? w.warp >= 3 : true
       if (visible) standing(p, x, y, seat.staff, tick, onTheMove(w), w.left)
       if (w.mode.startsWith('teleport')) teleportEffect(p, x, y, w.warp, w.mode)
     }
