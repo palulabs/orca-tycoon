@@ -66,7 +66,8 @@ A status line along the top counts teams, staff, busy agents and how many need y
 ## Two layouts, two appearances
 
 The Layout control picks the floor plan and the panel remembers it. The separate Appearance
-control toggles Dark for any layout. The office opens in the Loft with Dark off.
+control toggles Dark for any layout. The office opens in the Loft with Dark off. The ⏱ button sets
+how long an agent that just finished stays at its desk before its break.
 
 - **Loft** shows the office from the front and above, like a doll's house with its front wall
   taken off. It is set up like a real office in an old concrete hall: a double-height window onto
