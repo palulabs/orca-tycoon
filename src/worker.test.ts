@@ -2,6 +2,7 @@
 // an agent's pane key to the CLI call that brings it to the front.
 import { assert, test } from 'orca/testing'
 import {
+  botLook,
   cliEnvironment,
   isChatSession,
   labelOf,
@@ -484,4 +485,219 @@ test('a sleeping desk sharing a name never changes a busy desk nameplate', () =>
   assert.equal(busy.staff[0].label, 'feature')
   // with no conversation to borrow from, the sleeping one keeps its own name
   assert.equal(asleep.label, 'feature')
+})
+
+
+// ---- bots ----------------------------------------------------------------------------------------
+
+const home = (bot: string, agents: unknown[] = [], extra: Record<string, unknown> = {}) => ({
+  workspaceKind: 'folder-workspace',
+  worktreeId: `folder:${bot}`,
+  repo: 'Bots',
+  displayName: bot,
+  bot,
+  botHome: true,
+  agents,
+  ...extra
+})
+const chat = (state: string, extra: Record<string, unknown> = {}) => ({
+  paneKey: `structured-agent-session-${state}`,
+  state,
+  agentType: 'claude',
+  conversationName: 'Chief of Stack',
+  ...extra
+})
+
+test('an Orca without bot fields draws the office it always did', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', agents: [{ paneKey: 'p1', state: 'working' }] },
+        { worktreeId: 'w2', repo: 'web', displayName: 'WEB-2', agents: [] },
+        // a bot's folder on a host that does not mark it as a home stays an ordinary team
+        { worktreeId: 'folder:x', repo: 'Bots', displayName: 'Chief of Stack', agents: [{ paneKey: 'p2', state: 'done' }] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.bots, [])
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['Bots', 'web'])
+  for (const desk of snap.floors.flatMap((f) => f.desks)) {
+    assert.equal(desk.bot, null)
+    assert.equal(desk.automation, null)
+    assert.equal(desk.repo, snap.floors.find((f) => f.desks.includes(desk))!.repo)
+  }
+})
+
+test('a bot home becomes the bot, off the floors, with its chat as its staff', () => {
+  const raw = { result: { worktrees: [home('Chief of Stack', [chat('done', { lastAssistantMessage: 'Filed WEB-160.\nMore' })])] } }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors, [])
+  assert.equal(snap.bots.length, 1)
+  const [bot] = snap.bots
+  assert.equal(bot.id, 'Chief of Stack')
+  assert.equal(bot.name, 'Chief of Stack')
+  assert.equal(bot.homeId, 'folder:Chief of Stack')
+  assert.equal(bot.environment, null)
+  assert.equal(bot.staff[0].id, 'structured-agent-session-done')
+  assert.equal(bot.state, 'done')
+  assert.equal(bot.said, 'Filed WEB-160.')
+  assert.equal(bot.line, 'Filed WEB-160.')
+  assert.deepEqual(bot.desks, [])
+})
+
+test("a bot's desks leave their project for the bot, sleeping ones too, and keep their project", () => {
+  const raw = {
+    result: {
+      worktrees: [
+        home('Chief of Stack', [chat('idle')]),
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-160', bot: 'Chief of Stack', agents: [{ paneKey: 'p1', state: 'working' }] },
+        { worktreeId: 'w2', repo: 'docs', displayName: 'DOC-12', bot: 'Chief of Stack', agents: [] },
+        { worktreeId: 'w3', repo: 'docs', displayName: 'DOC-14', bot: 'Chief of Stack', isArchived: true, agents: [] },
+        { worktreeId: 'w4', repo: 'web', displayName: 'WEB-171', agents: [{ paneKey: 'p4', state: 'working' }] },
+        // only a bot's desk is busy in api: the api team stays off the floor
+        { worktreeId: 'w5', repo: 'api', displayName: 'API-1', bot: 'Chief of Stack', agents: [{ paneKey: 'p5', state: 'waiting' }] },
+        { worktreeId: 'w6', repo: 'api', displayName: 'API-2', agents: [] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors.map((f) => [f.repo, f.desks.map((d) => d.id)]), [['web', ['w4']]])
+  const [bot] = snap.bots
+  assert.deepEqual(bot.desks.map((d) => [d.id, d.repo, d.bot]), [
+    ['w1', 'web', 'Chief of Stack'],
+    ['w2', 'docs', 'Chief of Stack'],
+    ['w5', 'api', 'Chief of Stack']
+  ])
+  assert.equal(bot.desks[1].staff.length, 0)
+  assert.equal(bot.desks[1].label, 'DOC-12')
+  // its own chat is quiet and two of its desks are busy: it keeps an eye on them
+  assert.equal(bot.state, 'watching')
+  assert.equal(bot.line, "I'm keeping an eye on 2 desks")
+})
+
+test('a bot shows its most urgent chat, and keeps an eye on a single busy desk by its nameplate', () => {
+  const desk = (state: string) => ({ label: 'WEB-151', staff: [{ state, label: 'WEB-151' }] }) as any
+  const staff = (state: string, line = state) => ({ state, line, said: null, task: null, since: 0 }) as any
+  assert.equal(botLook({ staff: [staff('done'), staff('waiting'), staff('working')], desks: [] }).state, 'waiting')
+  assert.equal(botLook({ staff: [staff('idle')], desks: [desk('working')] }).line, "I'm keeping an eye on WEB-151")
+  assert.equal(botLook({ staff: [staff('idle')], desks: [desk('done')] }).state, 'idle')
+  assert.equal(botLook({ staff: [staff('working', "I'm reading a ticket")], desks: [desk('blocked')] }).line, "I'm reading a ticket")
+  const asleep = botLook({ staff: [], desks: [desk('working')] })
+  assert.equal(asleep.state, 'asleep')
+  assert.equal(asleep.line, "I'm resting until someone asks for me")
+})
+
+test('a desk naming a bot with no home in the rows gets a bot of its own, asleep', () => {
+  const raw = {
+    result: { worktrees: [{ worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', bot: 'Triage', agents: [{ paneKey: 'p1', state: 'working' }] }] }
+  }
+  const [bot] = toSnapshot(raw, 1).bots
+  assert.equal(bot.id, 'Triage')
+  assert.equal(bot.homeId, null)
+  assert.deepEqual(bot.staff, [])
+  assert.equal(bot.state, 'asleep')
+  assert.deepEqual(bot.desks.map((d) => d.id), ['w1'])
+})
+
+test('bots on paired servers keep apart by server, and a desk finds its bot there first', () => {
+  const local = {
+    result: {
+      worktrees: [
+        home('Chief of Stack', [chat('working')]),
+        home('Release notes', []),
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', bot: 'Chief of Stack', agents: [{ paneKey: 'p1', state: 'working' }] }
+      ]
+    }
+  }
+  const server = (worktrees: unknown[]) => ({ result: { worktrees } })
+  const snap = toSnapshot(local, 1, [
+    {
+      environment: 'aaa',
+      raw: server([
+        home('Chief of Stack', [chat('waiting')], { environment: { id: 'aaa', name: 'lane-poc' } }),
+        { worktreeId: 'w2', repo: 'web', displayName: 'WEB-2', bot: 'Chief of Stack', agents: [{ paneKey: 'p2', state: 'working' }] }
+      ])
+    },
+    {
+      environment: 'bbb',
+      raw: server([
+        // no home here: the only Release notes anywhere runs it
+        { worktreeId: 'w3', repo: 'docs', displayName: 'DOC-1', bot: 'Release notes', agents: [{ paneKey: 'p3', state: 'working' }] },
+        // two Chiefs of Stack elsewhere and none here: one of its own, asleep
+        { worktreeId: 'w4', repo: 'docs', displayName: 'DOC-2', bot: 'Chief of Stack', agents: [{ paneKey: 'p4', state: 'working' }] }
+      ])
+    }
+  ])
+  const byId = new Map(snap.bots.map((b) => [b.id, b]))
+  assert.deepEqual([...byId.keys()], ['aaa|Chief of Stack', 'bbb|Chief of Stack', 'Chief of Stack', 'Release notes'])
+  assert.deepEqual(byId.get('Chief of Stack')!.desks.map((d) => d.id), ['w1'])
+  const remote = byId.get('aaa|Chief of Stack')!
+  assert.equal(remote.environment, 'aaa')
+  assert.equal(remote.host, 'lane-poc')
+  assert.equal(remote.homeId, 'aaa|folder:Chief of Stack')
+  assert.equal(remote.state, 'waiting')
+  assert.deepEqual(remote.desks.map((d) => [d.id, d.bot]), [['aaa|w2', 'aaa|Chief of Stack']])
+  assert.deepEqual(byId.get('Release notes')!.desks.map((d) => d.id), ['bbb|w3'])
+  const stub = byId.get('bbb|Chief of Stack')!
+  assert.equal(stub.homeId, null)
+  assert.equal(stub.state, 'asleep')
+  assert.deepEqual(stub.desks.map((d) => d.id), ['bbb|w4'])
+})
+
+test('a desk an automation made says so, with the automation name when Orca sends it', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', automationCreated: true, automationName: 'Nightly deps', agents: [{ paneKey: 'p1', state: 'working' }] },
+        { worktreeId: 'w2', repo: 'web', displayName: 'WEB-2', automationCreated: true, agents: [] }
+      ]
+    }
+  }
+  const [a, b] = toSnapshot(raw, 1).floors[0].desks
+  assert.deepEqual(a.automation, { name: 'Nightly deps' })
+  assert.deepEqual(b.automation, { name: null })
+})
+
+test('a bot chat session has no CLI way to the front, so the worker never claims one', async () => {
+  // Orca cannot activate a folder workspace from the CLI, so the panel hides Open in Orca for bots
+  const raw = { result: { worktrees: [home('Chief of Stack', [chat('done')])] } }
+  const [bot] = toSnapshot(raw, 1).bots
+  assert.ok(isChatSession(bot.staff[0].id))
+})
+
+
+test("a bot's desks never change the nameplates of their project's team", () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'w1', repo: 'web', displayName: 'feature', agents: [{ paneKey: 'p1', state: 'working', conversationName: 'Polish the header' }] },
+        { worktreeId: 'w2', repo: 'web', displayName: 'feature', bot: 'Triage', agents: [{ paneKey: 'p2', state: 'working', conversationName: 'Sort the inbox' }] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  // alone in its team, the desk keeps its own name, as it did before bots
+  assert.equal(snap.floors[0].desks[0].staff[0].label, 'feature')
+  assert.equal(snap.bots[0].desks[0].staff[0].label, 'feature')
+})
+
+test('a bot home that does not say which bot it is stays off the floor', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        { worktreeId: 'folder:x', repo: 'Bots', displayName: 'Mystery', botHome: true, agents: [{ paneKey: 'p', state: 'working' }] },
+        { worktreeId: 'w1', repo: 'web', displayName: 'WEB-1', agents: [{ paneKey: 'p1', state: 'working' }] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['web'])
+  assert.deepEqual(snap.bots, [])
+})
+
+test('keeping an eye on one desk names the agent there that is busy', () => {
+  const desk = { label: 'WEB-151', staff: [{ state: 'done', label: 'first' }, { state: 'working', label: 'second' }] } as any
+  const staff = { state: 'idle', line: '', said: null, task: null, since: 0 } as any
+  assert.equal(botLook({ staff: [staff], desks: [desk] }).line, "I'm keeping an eye on second")
 })

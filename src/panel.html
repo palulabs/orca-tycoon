@@ -104,6 +104,25 @@
         line-height: 1;
         white-space: nowrap;
       }
+      /* The coordinator pick: a plain select dressed like the buttons beside it. */
+      .themes.pick select {
+        height: 22px;
+        max-width: 160px;
+        padding: 0 4px;
+        background: transparent;
+        color: var(--panel-foreground, var(--orca-foreground, #e8e6f0));
+        border: 0;
+        font: inherit;
+        cursor: pointer;
+      }
+      .themes.pick select:focus-visible {
+        outline: 2px solid var(--panel-primary, var(--orca-primary, #8e86ff));
+        outline-offset: -2px;
+      }
+      .themes.pick option {
+        background: var(--panel-popover, var(--orca-popover, #221f30));
+        color: var(--panel-popover-foreground, var(--orca-popover-foreground, inherit));
+      }
       .control-label {
         color: var(--panel-muted, var(--orca-muted-foreground, #9a97a8));
         align-self: center;
@@ -217,6 +236,12 @@
       </div>
       <div class="themes stay" id="desk-stay" role="group" aria-label="Desk stay after finishing">
         <button type="button">⏱ 1m</button>
+      </div>
+      <span class="control-label" id="coordinator-label" hidden>Coordinator</span>
+      <div class="themes pick" id="coordinator" hidden>
+        <select aria-label="Coordinator: the bot that gets its own room and walks the floor" title="The bot that gets its own room and walks the floor">
+          <option value="">None</option>
+        </select>
       </div>
       <div class="themes festive" id="christmas" hidden>
         <button type="button" aria-pressed="false" title="Christmas decorations">🎄</button>
