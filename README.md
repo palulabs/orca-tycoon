@@ -87,7 +87,7 @@ on your `PATH`.
   for you, it waits at its way in with an amber `?`. Its own desks still form an island in a room
   named after it, with nobody at the head. When nothing goes on it stays, asleep at its desk.
 
-![Bots in the Loft: Chief of Stack, the coordinator, stops at a desk on its round to ask how DAT-11 is doing, Release notes and Triage stand at the heads of their islands, and the coordinator's room with its floor map stands at the right end of the hangout](docs/bots.png)
+![Bots in the Loft: Chief of Stack, the coordinator, stops at a desk on its round to ask how DAT-11 is doing, Release notes and Triage sit at desks of their own at the heads of their islands, and the coordinator's room with its floor map stands at the right end of the hangout](docs/bots.png)
 
 A status line along the top counts teams, bots, staff, busy agents and how many need you. A bot
 that waits for you counts among those who need you.

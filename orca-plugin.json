@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "office-tycoon",
   "name": "Office Tycoon for Orca",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Every agent on your Orca host as a little pixel worker in a tycoon-style office.",
   "author": {
     "name": "Palu Labs",
@@ -30,7 +30,7 @@
     },
     {
       "path": "docs/catalog/bots.png",
-      "alt": "Bots in their own rooms, each at the head of the desks it runs, and the coordinator asking how DAT-11 is doing"
+      "alt": "Bots in their own rooms, each at a desk of its own at the head of the desks it runs, and the coordinator asking how DAT-11 is doing"
     },
     {
       "path": "docs/catalog/coordinator.png",

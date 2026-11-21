@@ -29,9 +29,12 @@ const ROOM_MIN = ISL_W + ROOM_PAD * 2
 export const LOFT_MIN_W = ROOM_MIN + SPINE + OUTER * 2 + 4
 // A bot sits at the head of its island, at a desk of its own at the island's left end, turned
 // toward its staff: the bot on the left, its desk (HEAD_DESK_W across) between it and the island.
-const HEAD_W = 30
-const HEAD_DESK_X = 14
-const HEAD_DESK_W = 10
+// HEAD_W is the floor the head takes from its room's width, as the podium did, so two bot rooms
+// still sit side by side on a 640 px panel; the bot's chair reaches HEAD_IN into the room's padding.
+const HEAD_W = 20
+const HEAD_IN = 6
+const HEAD_DESK_X = 12
+const HEAD_DESK_W = 8
 const HEAD_SPAN = HEAD_DESK_X + HEAD_DESK_W // from the bot's x to the far edge of its desk
 
 /**
@@ -237,7 +240,7 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots 
           // the head sits at its desk at the island's left end, its front level with the chairs
           // a bot with no desks sits at a little desk of its own in the middle of its room
           if (team.head && !team.units.length) room.head = { bot: team.bot, x: room.x + Math.floor(colW / 2) - 7, y: cursor + 14 + 22, station: true }
-          else if (team.head) room.head = headAt(team.bot, ix - head + 2, cursor + 14 + 22, 20)
+          else if (team.head) room.head = headAt(team.bot, ix - head + 2 - HEAD_IN, cursor + 14 + 22, 20)
         } else {
           const perRow = perRowOf(team.head)
           for (let i = 0; i < team.islands; i++) {
@@ -247,7 +250,7 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots 
             const ix = room.x + Math.floor((colW - rowW - head) / 2) + head + (i % perRow) * (ISL_W + 8)
             isles.push({ x: ix, y: cursor + 22 + row * FULL_BLOCK, half: false, cells: Array(6).fill(null), team: null })
           }
-          if (team.head) room.head = headAt(team.bot, isles[0].x - head + 2, isles[0].y + ID + 22, ID * 2 + 2)
+          if (team.head) room.head = headAt(team.bot, isles[0].x - head + 2 - HEAD_IN, isles[0].y + ID + 22, ID * 2 + 2)
         }
         if (team.bot) for (const isl of isles) isl.bot = team.bot
         room.islands.push(...isles)
