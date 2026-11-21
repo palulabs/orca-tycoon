@@ -27,9 +27,20 @@ const ROOM_PAD = 6
 const ROOM_MIN = ISL_W + ROOM_PAD * 2
 /** Narrower than this and not even one room fits beside the walkway. */
 export const LOFT_MIN_W = ROOM_MIN + SPINE + OUTER * 2 + 4
-// A bot stands at the head of its island, on a podium at the island's left end.
-const HEAD_W = 20
-const PODIUM_W = 16
+// A bot sits at the head of its island, at a desk of its own at the island's left end, turned
+// toward its staff: the bot on the left, its desk (HEAD_DESK_W across) between it and the island.
+const HEAD_W = 30
+const HEAD_DESK_X = 14
+const HEAD_DESK_W = 10
+const HEAD_SPAN = HEAD_DESK_X + HEAD_DESK_W // from the bot's x to the far edge of its desk
+
+/**
+ * The head of an island: the bot at `x`, its desk's front edge on row `y`, the desk `depth` deep
+ * so it runs the island's length, and `by` the row the bot sits on, halfway along it.
+ */
+function headAt(bot, x, y, depth) {
+  return { bot, x, y, depth, by: y - Math.floor(depth / 2) + 5 }
+}
 // A bot with no desks of its own sits at its station: a small desk, from STATION_L left of the
 // bot's x, STATION_W wide.
 const STATION_W = 32
@@ -223,10 +234,10 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots 
         if (team.half) {
           const ix = room.x + Math.floor((colW - ISL_W - head) / 2) + head
           if (team.units.length) isles.push({ x: ix, y: cursor + 14, half: true, cells: Array(3).fill(null), team: plan.length > 1 ? team.floor.repo : null })
-          // the head stands on its podium at the island's left end, level with the chairs
+          // the head sits at its desk at the island's left end, its front level with the chairs
           // a bot with no desks sits at a little desk of its own in the middle of its room
           if (team.head && !team.units.length) room.head = { bot: team.bot, x: room.x + Math.floor(colW / 2) - 7, y: cursor + 14 + 22, station: true }
-          else if (team.head) room.head = { bot: team.bot, x: ix - head + 2, y: cursor + 14 + 22 }
+          else if (team.head) room.head = headAt(team.bot, ix - head + 2, cursor + 14 + 22, 20)
         } else {
           const perRow = perRowOf(team.head)
           for (let i = 0; i < team.islands; i++) {
@@ -236,7 +247,7 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots 
             const ix = room.x + Math.floor((colW - rowW - head) / 2) + head + (i % perRow) * (ISL_W + 8)
             isles.push({ x: ix, y: cursor + 22 + row * FULL_BLOCK, half: false, cells: Array(6).fill(null), team: null })
           }
-          if (team.head) room.head = { bot: team.bot, x: isles[0].x - head + 2, y: isles[0].y + ID + 22 }
+          if (team.head) room.head = headAt(team.bot, isles[0].x - head + 2, isles[0].y + ID + 22, ID * 2 + 2)
         }
         if (team.bot) for (const isl of isles) isl.bot = team.bot
         room.islands.push(...isles)
@@ -302,7 +313,7 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots 
  * you, which change between polls.
  */
 function coordinatorPlan(bot, room, rooms) {
-  // it stands in front of the podium, low enough that what it says leaves the bot on it in view
+  // it stands in front of the bot's desk, low enough that what it says leaves the bot in view
   const stops = rooms.filter((r) => r.head).map((r) => ({ at: { x: r.head.x + 2, y: r.head.y + 14 }, say: `Checking on ${r.head.bot.name}` }))
   return { bot, room, home: room.home, entrance: room.entrance, stops }
 }
@@ -316,7 +327,7 @@ const DRAWER_W = 12
  */
 function drawerBlocks(room) {
   const left = Math.min(...room.islands.map((i) => i.x), ...(room.head ? [room.head.x - (room.head.station ? STATION_L : 2)] : []))
-  const right = Math.max(...room.islands.map((i) => i.x + ISL_W), ...(room.head ? [room.head.x + (room.head.station ? STATION_W - STATION_L : PODIUM_W)] : []))
+  const right = Math.max(...room.islands.map((i) => i.x + ISL_W), ...(room.head ? [room.head.x + (room.head.station ? STATION_W - STATION_L : HEAD_SPAN)] : []))
   const spots = []
   if (left - room.x >= DRAWER_W + 2) spots.push(room.x + 1)
   if (room.x + room.w - right >= DRAWER_W + 2) spots.push(room.x + room.w - DRAWER_W - 1)
@@ -520,7 +531,7 @@ export const loftGeometry = {
     }
     for (const room of layout.rooms) {
       if (room.head?.station) boxes.push([room.head.x - STATION_L - 1, room.head.y - 4, STATION_W + 2, 10])
-      else if (room.head) boxes.push([room.head.x - 1, room.head.y - 1, PODIUM_W + 2, 7])
+      else if (room.head) boxes.push([room.head.x - 1, room.head.y - room.head.depth, HEAD_SPAN + 2, room.head.depth + 6])
     }
     const k = layout.common.coord
     if (k) {
@@ -2023,16 +2034,6 @@ export function standingBot(p, x, y, colors, state, t, moving) {
   botMarks(p, x + 4, y + 3 - bob, state, t)
 }
 
-/** The small navy podium a bot stands on at the head of its island. */
-function podium(p, x, y) {
-  shadow(p, x + 1, y + 5, PODIUM_W, 2)
-  ol(p, (q) => {
-    q(x, y, PODIUM_W, 2, '#f4eedf')
-    q(x, y + 2, PODIUM_W, 3, NAVY[1])
-  })
-  for (let i = 2; i < PODIUM_W; i += 4) p(x + i, y + 2, 1, 3, NAVY[3])
-}
-
 /**
  * A bot with no desks at its station: sat behind a small wooden desk, its terminal facing you
  * beside it, its mug on the other side.
@@ -2064,14 +2065,40 @@ function botStation(p, head, colors, t) {
   p(dx + 6, y - 5, 1, 1, '#f4eedf')
 }
 
-/** A bot at the head of its island, on its podium; one with no desks, at its station. */
+/**
+ * A bot at the head of its island: sat at the left end, behind a desk of its own turned toward its
+ * staff, like the head of the table. Its terminal stands on the desk facing the bot, its back to
+ * the island; one with no desks sits at its station instead.
+ */
 function botHead(p, head, colors, t) {
   if (head.station) return botStation(p, head, colors, t)
+  const { x, y, depth, by } = head
   const state = head.bot.state
   const bob = state === 'working' ? t % 2 : 0
-  podium(p, head.x, head.y)
-  botMascot(p, head.x + 2, head.y - 12 - bob, colors, state, t)
-  botMarks(p, head.x + 8, head.y - 12 - bob, state, t)
+  const dx = x + HEAD_DESK_X
+  // its chair: the back on the left, the seat under it
+  ol(p, (q) => {
+    q(x - 1, by - 12, 3, 13, NAVY[1])
+    q(x, by - 2, 13, 3, NAVY[1])
+  })
+  p(x, by - 11, 1, 10, NAVY[3])
+  botMascot(p, x + 1, by - 14 - bob, colors, state, t)
+  botMarks(p, x + 7, by - 14 - bob, state, t)
+  // the desk, its long side running back toward the window, as long as the island is deep
+  shadow(p, dx + 1, y + 6, HEAD_DESK_W, 2)
+  ol(p, (q) => {
+    q(dx, y + 1 - depth, HEAD_DESK_W, depth, C.woodTop)
+    q(dx, y + 1, HEAD_DESK_W, 3, C.wood)
+    q(dx, y + 3, HEAD_DESK_W, 1, C.woodDark)
+    q(dx + 1, y + 4, 2, 2, C.woodDark)
+    q(dx + HEAD_DESK_W - 3, y + 4, 2, 2, C.woodDark)
+  })
+  p(dx + HEAD_DESK_W - 1, y + 2 - depth, 1, depth - 1, C.wood)
+  // papers by the bot's hand, and the terminal turned toward it
+  p(dx + 1, by - 1, 4, 3, '#f4eedf')
+  ol(p, (q) => q(dx + 5, by - 15, 3, 10, '#2a2833'))
+  p(dx + 5, by - 14, 1, 8, state === 'asleep' ? '#3a3846' : state === 'blocked' ? C.red : state === 'waiting' ? C.amber : '#73b3ff')
+  p(dx + 6, by - 5, 1, 2, '#2a2833')
 }
 
 /** The floor map on its stand: a bar in each bot's colour, lines to the desks they run. */

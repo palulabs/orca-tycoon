@@ -68,8 +68,9 @@ on your `PATH`.
   Orca server too. Bot rooms come first on the floor. Each desk keeps its
   ticket nameplate and gets a small tag under it for the project it works in. When two projects
   in one room share a name, such as three `website`s, the tag adds the folder they live in:
-  `acme/website`. The bot stands at
-  the head of its island: on a little navy podium in the loft, behind a wooden lectern in Brick.
+  `acme/website`. The bot sits at
+  the head of its island like the head of the table: in its chair at the island's end, behind a
+  desk of its own turned toward its staff, its terminal facing it.
   A bot comes in while its own chat is open in Orca or one of its desks has an agent at work. A
   bot with no desks on the floor sits at a little desk of its own in the middle of its room, its terminal
   facing you.

@@ -49,8 +49,7 @@ import {
   whiteboard,
   workstation,
   botColors,
-  brickBot,
-  lectern
+  brickBot
 } from './sprites.js'
 import { loftGeometry, loftMinW, drawLoft, forgetSlots, layoutLoft, lounging, outlinedAt, projectOf, sitting, standing, standingBot } from './loft.js'
 import {
@@ -125,7 +124,7 @@ const BRICK = { wall: '#b5653f', top: '#cf7a50', dark: '#8f4b2d', window: '#a8d2
 const CARPETS = ['#a98260', '#7f9b74', '#8d7f9c', '#7d8ba6', '#a8936f', '#9c7575', '#6f9a99']
 // Every bot's room has the navy of the loft's curtains, outside the team carpets, so it never reads as a project.
 const BOT_CARPET = '#5b7597'
-const BRICK_HEAD = 14 // the bot and its lectern at the head of the first row
+const BRICK_HEAD = 22 // the bot and its desk, turned toward the row, at the head of the first row
 const COORD_ROOM_W = 96 // the coordinator's room beside the commons
 const COORD_ROOM_H = 56 // or under it, on a floor too narrow for both side by side
 const COORD_DOOR_X = 46 // its door in the top edge, between its sign and its whiteboard
@@ -1159,9 +1158,9 @@ function floorObstacles(who) {
     const boardW = boardWOf(room)
     boxes.push([x + 3, y + 3, plaqueW(room), 7])
     if (boardW > 8) boxes.push([x + w - boardW - 4, y + 3, boardW, 7])
-    // a bot at the head of its row, behind its lectern, or at its station
+    // a bot at the head of its row, at its desk turned toward the row, or at its station
     if (room.head?.station) boxes.push([room.head.x - 2, room.head.y + top, DESK_W + 2, SEAT_H + LABEL_H - top])
-    else if (room.head) boxes.push([room.head.x, room.head.y + 5, 12, SEAT_H + LABEL_H - 5])
+    else if (room.head) boxes.push([room.head.x, room.head.y + 3, BRICK_HEAD - 2, SEAT_H + LABEL_H - 3])
   }
   // the coordinator's desk, and its room's edges: Brick has no walls, but its only way in or out
   // is the door in its top edge
@@ -1490,15 +1489,27 @@ function brickMarks(p, state) {
   }
 }
 
-/** A bot at the head of its row in Brick: flat, behind a small wooden lectern. */
+/**
+ * A bot at the head of its row in Brick: in its chair at the left end, behind a desk of its own
+ * turned toward the row, its terminal facing it; one with no desks on the floor, at its station.
+ */
 function drawBrickHead(head) {
   const { bot } = head
   if (head.station) return drawBrickStation(head, bot, true)
+  const p = painter(ctx, head.x, head.y)
   const bob = bot.state === 'working' ? tick % 2 : 0
-  const at = painter(ctx, head.x + 1, head.y + 5 - bob)
+  p(0, 4, 10, 12, C.chair)
+  p(0, 4, 2, 12, C.chairDark)
+  const at = painter(ctx, head.x, head.y + 5 - bob)
   brickBot(at, colorsOf(bot), bot.state, tick)
   brickMarks(at, bot.state)
-  lectern(painter(ctx, head.x, head.y + 11))
+  // the desk, long side down beside the row
+  p(12, 2, 8, 17, C.woodDark)
+  p(12, 2, 7, 16, C.woodTop)
+  p(13, 3, 5, 14, C.wood)
+  // the terminal, its screen toward the bot
+  p(14, 6, 3, 9, C.frame)
+  p(14, 7, 1, 7, bot.state === 'blocked' ? C.red : bot.state === 'waiting' ? C.amber : bot.state === 'asleep' ? C.chairDark : C.screen)
 }
 
 /** The coordinator's desk in Brick: its chair, itself when it sits there, the monitor and the desk. */
@@ -1844,7 +1855,8 @@ function botBox(bot) {
   if (!room) return null
   const { x, y, station } = room.head
   if (station && !loft()) return [x + 4, y - 2, 12, 12]
-  return loft() ? [x + 1, y - 13, 14, 18] : [x, y + 3, 12, 16]
+  if (loft()) return station ? [x + 1, y - 13, 14, 18] : [x, room.head.by - 15, 14, 18]
+  return [x, y + 3, 12, 16]
 }
 
 /** The frame around the selected seat, and the speech bubbles. */
