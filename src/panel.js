@@ -52,7 +52,7 @@ import {
   brickBot,
   lectern
 } from './sprites.js'
-import { loftGeometry, loftMinW, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing, standingBot } from './loft.js'
+import { loftGeometry, loftMinW, drawLoft, forgetSlots, layoutLoft, lounging, outlinedAt, projectOf, sitting, standing, standingBot } from './loft.js'
 import {
   breakWalk,
   coordinatorSeated,
@@ -182,6 +182,27 @@ try {
   // no storage in this frame: the default for this session
 }
 
+// Hide sleeping, as in Orca's sidebar filter: desks with nobody at work are left out, and rooms
+// reflow. Off by default, like Orca's; the pick is kept.
+const SLEEPING_KEY = 'office-tycoon.hide-sleeping'
+let hideSleeping = false
+try {
+  hideSleeping = localStorage.getItem(SLEEPING_KEY) === 'true'
+} catch {
+  // no storage in this frame: every desk shows this session
+}
+
+/** The office as drawn: with Hide sleeping on, only desks with an agent, and teams that keep one. */
+function shown(snap) {
+  if (!hideSleeping || !snap) return snap
+  const awake = (desks) => desks.filter((d) => d.staff.length > 0)
+  return {
+    ...snap,
+    floors: snap.floors.map((f) => ({ ...f, desks: awake(f.desks) })).filter((f) => f.desks.length > 0),
+    bots: (snap.bots ?? []).map((b) => ({ ...b, desks: awake(b.desks) }))
+  }
+}
+
 // The coordinator: one bot, picked in the header, that gets a room of its own and walks the floor.
 // Kept by its id, so it is the panel's choice and never a name built into the code.
 const COORD_KEY = 'office-tycoon.coordinator'
@@ -230,7 +251,8 @@ festiveSwitch?.querySelector('button')?.addEventListener('click', () => {
   draw()
 })
 
-let snapshot = null
+let snapshot = null // the office as drawn, after Hide sleeping
+let received = null // the worker's last answer, as it came
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
 // The bots on the floor and their colours, taken from each snapshot.
 let shownBots = []
@@ -494,8 +516,8 @@ function computeLayout(cssW, scale, corridor = GAP) {
     const { floor, lines, tableW, h } = plan
     const room = { x, y: ry, w: plan.w, h, name: floor.repo, carpet: plan.bot ? BOT_CARPET : pick(CARPETS, floor.repo), notes: [] }
     if (plan.bot) room.bot = plan.bot
-    // a bot with no desk awake still stands at the head of its row
-    if (plan.head && !lines.length) room.head = { bot: plan.bot, x: room.x + GLASS + PAD + Math.floor((plan.inner - plan.head) / 2), y: room.y + TOP }
+    // a bot with no desk awake sits at a little desk of its own, its station, in the middle
+    if (plan.head && !lines.length) room.head = { bot: plan.bot, x: room.x + GLASS + PAD + Math.floor((plan.inner - DESK_W) / 2) + 2, y: room.y + TOP, station: true }
     lines.forEach((line, li) => {
       const lineW = line.reduce((n, t) => n + tableW(t), 0) + TABLE_GAP * (line.length - 1)
       let tx = room.x + GLASS + PAD + plan.head + Math.floor((plan.inner - plan.head - lineW) / 2)
@@ -1137,8 +1159,9 @@ function floorObstacles(who) {
     const boardW = boardWOf(room)
     boxes.push([x + 3, y + 3, plaqueW(room), 7])
     if (boardW > 8) boxes.push([x + w - boardW - 4, y + 3, boardW, 7])
-    // a bot at the head of its row, behind its lectern
-    if (room.head) boxes.push([room.head.x, room.head.y + 5, 12, SEAT_H + LABEL_H - 5])
+    // a bot at the head of its row, behind its lectern, or at its station
+    if (room.head?.station) boxes.push([room.head.x - 2, room.head.y + top, DESK_W + 2, SEAT_H + LABEL_H - top])
+    else if (room.head) boxes.push([room.head.x, room.head.y + 5, 12, SEAT_H + LABEL_H - 5])
   }
   // the coordinator's desk, and its room's edges: Brick has no walls, but its only way in or out
   // is the door in its top edge
@@ -1470,6 +1493,7 @@ function brickMarks(p, state) {
 /** A bot at the head of its row in Brick: flat, behind a small wooden lectern. */
 function drawBrickHead(head) {
   const { bot } = head
+  if (head.station) return drawBrickStation(head, bot, true)
   const bob = bot.state === 'working' ? tick % 2 : 0
   const at = painter(ctx, head.x + 1, head.y + 5 - bob)
   brickBot(at, colorsOf(bot), bot.state, tick)
@@ -1479,12 +1503,16 @@ function drawBrickHead(head) {
 
 /** The coordinator's desk in Brick: its chair, itself when it sits there, the monitor and the desk. */
 function drawBrickChiefDesk(k) {
-  const { bot, seat } = k
+  drawBrickStation(k.seat, k.bot, chiefSeated())
+}
+
+/** A bot's own desk in Brick, at `seat`: its chair, itself when it sits there, the monitor and the desk. */
+function drawBrickStation(seat, bot, seated) {
   const p = painter(ctx, seat.x, seat.y)
   const state = bot.state
   p(4, 4, 12, 9, C.chair)
   p(4, 4, 12, 1, C.chairDark)
-  if (chiefSeated()) {
+  if (seated) {
     const at = painter(ctx, seat.x + 5, seat.y - 1 + (state === 'working' ? tick % 2 : 0))
     brickBot(at, colorsOf(bot), state, tick)
     brickMarks(at, state)
@@ -1790,7 +1818,7 @@ function draw() {
     // as wide as the desk itself (DESK_W), less a margin, so neighbouring nameplates never touch
     drawText(nameplate(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, DESK_W * s - 2, color, { align: 'center' })
     // in a bot's room, the project each desk works in, small, under its nameplate
-    if (seat.room.bot) drawText(seat.desk.repo ?? '', (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 7.5) * s, DESK_W * s - 2, '#23212b', { align: 'center', size: 9, chip: '#f1efe8' })
+    if (seat.room.bot) drawText(projectOf(seat.desk), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 7.5) * s, DESK_W * s - 2, '#23212b', { align: 'center', size: 9, chip: '#f1efe8' })
   }
 
   drawChiefName()
@@ -1814,7 +1842,8 @@ function botBox(bot) {
   }
   const room = layout.rooms.find((r) => r.head?.bot.id === bot.id)
   if (!room) return null
-  const { x, y } = room.head
+  const { x, y, station } = room.head
+  if (station && !loft()) return [x + 4, y - 2, 12, 12]
   return loft() ? [x + 1, y - 13, 14, 18] : [x, y + 3, 12, 16]
 }
 
@@ -1959,7 +1988,7 @@ function botDetail(bot) {
     lines.push(el('div', '', `Running ${plural(bot.desks.length, 'desk')}`))
     for (const d of bot.desks.slice(0, BOT_DESK_ROWS)) {
       const state = d.staff[0] ? stateLabel(d.staff[0].state) : 'asleep'
-      lines.push(el('div', 'row', `${d.staff[0]?.label || d.label} · ${d.repo} · ${state}`))
+      lines.push(el('div', 'row', `${d.staff[0]?.label || d.label} · ${projectOf(d)} · ${state}`))
     }
     if (bot.desks.length > BOT_DESK_ROWS) lines.push(el('div', 'row', `and ${bot.desks.length - BOT_DESK_ROWS} more`))
   }
@@ -2043,8 +2072,9 @@ function noteChanges() {
 }
 
 function apply(next) {
-  snapshot = next
-  shownBots = botsOnFloor(next)
+  received = next
+  snapshot = shown(next)
+  shownBots = botsOnFloor(snapshot)
   botPalette = botColors(shownBots)
   renderCoordinator()
   // Establish the new layout before updating the sidebar text. The final resize below measures
@@ -2150,7 +2180,7 @@ function cardAt(ax, ay) {
   const seat = key && seatOf(key)
   if (seat) {
     const { desk: d, staff } = seat
-    const where = [seat.room?.bot ? d.repo : seat.room?.name, d.branch || d.name, d.host && `on ${d.host}`].filter(Boolean).join(' · ')
+    const where = [seat.room?.bot ? projectOf(d) : seat.room?.name, d.branch || d.name, d.host && `on ${d.host}`].filter(Boolean).join(' · ')
     const lines = [where, ...seatFacts(seat), ...deskOrigin(d)]
     if (staff.said) lines.push(`"${staff.said}"`)
     return { key, title: staff.name || staff.label || d.name, lines }
@@ -2258,6 +2288,19 @@ function setDark(next) {
   draw()
 }
 
+function setHideSleeping(next) {
+  hideSleeping = next
+  try {
+    localStorage.setItem(SLEEPING_KEY, String(hideSleeping))
+  } catch {
+    // kept for this session only
+  }
+  renderThemes()
+  // every desk takes its place afresh, so the rooms close up or open out
+  forgetSlots()
+  if (received) apply(received)
+}
+
 function setDeskStay(next) {
   deskStay = deskStayOf(next)
   try {
@@ -2278,6 +2321,15 @@ function renderThemes() {
     darkButton.textContent = dark ? '☾' : '☀'
     darkButton.setAttribute('aria-label', dark ? 'Use light appearance' : 'Use dark appearance')
     darkButton.setAttribute('title', dark ? 'Use light appearance' : 'Use dark appearance')
+  }
+  const sleepingBox = document.getElementById('hide-sleeping')
+  if (sleepingBox) {
+    // Brick only ever seats agents at work, so there is nothing to hide there
+    sleepingBox.hidden = !loft()
+    const button = sleepingBox.querySelector('button')
+    const hint = hideSleeping ? 'Desks with no agent are hidden. Click to show them.' : 'Hide desks with no agent, as Orca hides sleeping workspaces.'
+    button?.setAttribute('aria-pressed', String(hideSleeping))
+    button?.setAttribute('title', hint)
   }
   const stayButton = document.querySelector('#desk-stay button')
   if (stayButton) {
@@ -2327,12 +2379,13 @@ coordinatorSelect?.addEventListener('change', () => {
     // kept for this session only
   }
   chief = null
-  if (snapshot) apply(snapshot)
+  if (received) apply(received)
 })
 
 for (const button of document.querySelectorAll('#themes button')) button.addEventListener('click', () => setLayout(button.dataset.layout))
 document.querySelector('#dark-toggle button')?.addEventListener('click', () => setDark(!dark))
 document.querySelector('#desk-stay button')?.addEventListener('click', () => setDeskStay(nextDeskStay(deskStay)))
+document.querySelector('#hide-sleeping button')?.addEventListener('click', () => setHideSleeping(!hideSleeping))
 renderThemes()
 
 async function poll() {

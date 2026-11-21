@@ -375,8 +375,10 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
   const homes = open.filter(({ w }) => w.botHome === true && str(w.bot))
   // a bot's home is never a desk, even one that does not say which bot it is
   const rest = open.filter(({ w }) => w.botHome !== true)
-  const botDesks = rest.filter(({ w }) => str(w.bot))
-  const projectDesks = rest.filter(({ w }) => !str(w.bot))
+  const owners = botOwners(all)
+  const botOf = (placed: Placed) => owners.get(placed.w) ?? null
+  const botDesks = rest.filter((placed) => botOf(placed))
+  const projectDesks = rest.filter((placed) => !botOf(placed))
   // A project with a live agent brings all its worktrees that are not archived, the sleeping ones
   // too, so the loft can give each its desk; a project nobody works in stays off the floor.
   const working = new Set(projectDesks.filter(({ w }) => busy(w)).map(({ w }) => repoOf(w)))
@@ -388,13 +390,30 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
   const seen = new Map<string, number>()
   const seenAll = new Map<string, number>()
   // a bot's desks sit apart from their project's team, so they are told apart among the bot's own
-  const nameKey = (w: Row) => `${str(w.bot) ? `\u0000bot|${str(w.bot)}|` : ''}${repoOf(w)}\n${nameOf(w).toLowerCase()}`
+  const nameKey = (w: Row) => {
+    const owner = owners.get(w)
+    return `${owner ? `\u0000bot|${owner.environment ?? ''}|${owner.name}|` : ''}${repoOf(w)}\n${nameOf(w).toLowerCase()}`
+  }
   for (const { w } of [...live, ...botDesks]) {
     const key = nameKey(w)
     seenAll.set(key, (seenAll.get(key) ?? 0) + 1)
     if (busy(w)) seen.set(key, (seen.get(key) ?? 0) + 1)
   }
+  const rowOfDesk = new Map<Desk, Row>()
+  // a project's main checkout, by repository: the folder over it names the project's owner
+  const mains = new Map<string, string>()
+  for (const { w, environment } of all) {
+    const repoId = str(w.repoId)
+    const path = str(w.path)
+    const key = `${environment ?? ''}|${repoId}`
+    if (repoId && path && w.isMainWorktree === true && !mains.has(key)) mains.set(key, path)
+  }
   const deskOf = (placed: Placed, bot: string | null): Desk => {
+    const desk = makeDesk(placed, bot)
+    rowOfDesk.set(desk, placed.w)
+    return desk
+  }
+  const makeDesk = (placed: Placed, bot: string | null): Desk => {
     const { w, environment } = placed
     const agents = busy(w) ? (w.agents as Row[]) : []
     const repo = repoOf(w)
@@ -414,6 +433,7 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
       label: labelOf(null, name, deskGeneric),
       staff: agents.map((row) => toStaff(row, name, generic)),
       bot,
+      org: null,
       automation: w.automationCreated === true ? { name: str(w.automationName) } : null
     }
   }
@@ -442,10 +462,10 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
     })
   }
   for (const placed of botDesks) {
-    const name = str(placed.w.bot)!
-    // the bot of that name on the same Orca, else the only one of that name anywhere, else one
-    // known only from its desks
-    let bot = bots.get(idOf(name, placed.environment)!)
+    const { name, environment } = botOf(placed)!
+    // the bot of that name on the Orca that names it, else the only one of that name anywhere,
+    // else one known only from its desks
+    let bot = bots.get(idOf(name, environment)!)
     if (!bot) {
       const named = [...bots.values()].filter((b) => b.name === name && b.homeId !== null)
       bot = named.length === 1 ? named[0] : undefined
@@ -458,8 +478,111 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
     bot.desks.push(deskOf(placed, bot.id))
   }
   const botList = [...bots.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
-  for (const bot of botList) Object.assign(bot, botLook(bot))
+  for (const bot of botList) {
+    Object.assign(bot, botLook(bot))
+    tellProjectsApart(bot.desks, rowOfDesk, mains)
+  }
   return { at, floors: out, bots: botList, error: null }
+}
+
+/** Which bot a workspace belongs to: the name it goes by and the Orca whose row names it. */
+type Owner = { name: string; environment: string | null }
+
+/** `local` in a row's parent address is this machine; any other id is the paired server it names. */
+const environmentOfId = (id: string | null): string | null => (!id || id === 'local' ? null : id)
+
+/** Every way another row can point at this one: its id, its `id:` and `identity:` selectors, its instance. */
+function refsOf(w: Row): string[] {
+  const id = str(w.worktreeId)
+  const identity = (w.identity ?? null) as Row | null
+  const key = str(identity?.key)
+  const instance = str(identity?.instanceId) ?? str(w.worktreeInstanceId) ?? (id?.startsWith('folder:') ? id.slice('folder:'.length) : null)
+  return [...(id ? [id, `id:${id}`] : []), ...(key ? [`identity:${key}`] : []), ...(instance ? [`instance:${instance}`] : [])]
+}
+
+/**
+ * The bot every workspace belongs to, if any. Orca's rule: whatever sits under a bot in
+ * navigation is in its room. A row that names its bot (`bot`) says so itself; any other row
+ * belongs to the bot of its parent, followed up the chain (a child of a child of the bot too).
+ * The parent can sit on another Orca: a workspace on a paired server nested under a bot here
+ * names neither the bot nor a lineage, only `parent.selector` and the environment it is on.
+ */
+export function botOwners(all: { w: Row; environment: string | null }[]): Map<Row, Owner> {
+  const byRef = new Map<string, { w: Row; environment: string | null }[]>()
+  const at = (environment: string | null, ref: string) => `${environment ?? ''}\u0000${ref}`
+  for (const placed of all) {
+    for (const ref of refsOf(placed.w)) {
+      for (const key of [at(placed.environment, ref), at('*', ref)]) {
+        const list = byRef.get(key) ?? []
+        list.push(placed)
+        byRef.set(key, list)
+      }
+    }
+  }
+  /** The row a reference names: on the Orcas tried first, in order, else the only one anywhere. */
+  const find = (ref: string | null, environments: (string | null)[]) => {
+    if (!ref) return null
+    for (const environment of environments) {
+      const hit = byRef.get(at(environment, ref))
+      if (hit?.length === 1) return hit[0]
+    }
+    const anywhere = byRef.get(at('*', ref))
+    return anywhere?.length === 1 ? anywhere[0] : null
+  }
+  const parentOf = ({ w, environment }: { w: Row; environment: string | null }) => {
+    const parent = (w.parent ?? null) as Row | null
+    const lineage = (w.workspaceLineage ?? null) as Row | null
+    const named = environmentOfId(str((parent?.environment as Row | null)?.id))
+    return (
+      find(str(parent?.selector), [named, environment]) ??
+      find(str(w.parentWorktreeId), [environment, null]) ??
+      find(str(lineage?.parentWorkspaceKey), [environment, null]) ??
+      find(str(lineage?.parentInstanceId) ? `instance:${str(lineage?.parentInstanceId)}` : null, [environment, null])
+    )
+  }
+  const owners = new Map<Row, Owner>()
+  const settled = new Set<Row>()
+  const ownerOf = (placed: { w: Row; environment: string | null }, path: Set<Row>): Owner | null => {
+    const { w, environment } = placed
+    if (settled.has(w)) return owners.get(w) ?? null
+    let owner: Owner | null = null
+    const name = str(w.bot)
+    if (name) owner = { name, environment }
+    else if (w.botHome !== true && !path.has(w)) {
+      path.add(w)
+      const parent = parentOf(placed)
+      if (parent) owner = ownerOf(parent, path)
+    }
+    settled.add(w)
+    if (owner) owners.set(w, owner)
+    return owner
+  }
+  for (const placed of all) ownerOf(placed, new Set())
+  return owners
+}
+
+/** The folder a checkout's project lives in, the owner or org: `kimbigames` for ~/code/kimbigames/website. */
+function orgOf(path: string | null): string | null {
+  const parts = (path ?? '').split(/[\\/]+/).filter(Boolean)
+  return parts.length >= 2 ? parts[parts.length - 2] : null
+}
+
+/**
+ * Desks in one bot's room whose projects share a name but are different repositories (three
+ * `website` desks from three orgs) get their project's owner, so their tags tell them apart.
+ * The owner is the folder over the project's main checkout, else over the desk's own checkout.
+ */
+function tellProjectsApart(desks: Desk[], rowOf: Map<Desk, Row>, mains: Map<string, string>): void {
+  const byName = new Map<string, Desk[]>()
+  for (const d of desks) byName.set(d.repo.toLowerCase(), [...(byName.get(d.repo.toLowerCase()) ?? []), d])
+  for (const same of byName.values()) {
+    const repoIdOf = (d: Desk) => {
+      const repoId = str(rowOf.get(d)?.repoId)
+      return repoId ? `${d.environment ?? ''}|${repoId}` : d.id
+    }
+    if (new Set(same.map(repoIdOf)).size < 2) continue
+    for (const d of same) d.org = orgOf(mains.get(repoIdOf(d)) ?? str(rowOf.get(d)?.path))
+  }
 }
 
 function botBase(id: string, name: string, environment: string | null, host: string | null): Bot {

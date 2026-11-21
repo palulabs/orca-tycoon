@@ -3,6 +3,7 @@
 import { assert, test } from 'orca/testing'
 import {
   botLook,
+  botOwners,
   cliEnvironment,
   isChatSession,
   labelOf,
@@ -700,4 +701,131 @@ test('keeping an eye on one desk names the agent there that is busy', () => {
   const desk = { label: 'WEB-151', staff: [{ state: 'done', label: 'first' }, { state: 'working', label: 'second' }] } as any
   const staff = { state: 'idle', line: '', said: null, task: null, since: 0 } as any
   assert.equal(botLook({ staff: [staff], desks: [desk] }).line, "I'm keeping an eye on second")
+})
+
+
+// ---- what sits under a bot belongs in its room ----------------------------------------------------
+
+// The rows as `orca worktree ps --json` gives them on 2026-11-21: Product v4 tracker's home here,
+// and a workspace on the paired server lane-poc2 nested under it in Orca's sidebar. The server row
+// names no bot and no lineage, only its parent's selector and the environment that parent is on.
+const TRACKER_HOME = home('Product v4 tracker', [], {
+  worktreeId: 'folder:c25887ad-1521-429b-aab4-24334a339683',
+  path: '/Users/israel/.orca/bots/product-v4-tracker',
+  environment: { id: 'local', name: 'local' }
+})
+const TTM_2496 = {
+  workspaceKind: 'git',
+  worktreeId: '0653921c-5c41-464f-a0c2-335f8719551e::/home/worker/orca/workspaces/platform/ttm-2496',
+  repoId: '0653921c-5c41-464f-a0c2-335f8719551e',
+  hostId: 'local',
+  identity: { key: 'wt2:local:a890b2dc-9393-4a73-a0d6-1890226335e8', executionHostId: 'local', instanceId: 'a890b2dc-9393-4a73-a0d6-1890226335e8' },
+  repo: 'platform',
+  path: '/home/worker/orca/workspaces/platform/ttm-2496',
+  displayName: 'TTM-2496 Trainings page and canvas redesign',
+  parentWorktreeId: null,
+  childWorktreeIds: [],
+  workspaceLineage: null,
+  parent: {
+    state: 'known',
+    selector: 'folder:c25887ad-1521-429b-aab4-24334a339683',
+    environment: { id: 'local', name: 'local' }
+  },
+  environment: { id: '0e579c7a-011c-48a4-89f6-606ef7886b3e', name: 'lane-poc2' },
+  agents: [{ paneKey: 'p-2496', state: 'working' }]
+}
+const LANE_POC2 = '0e579c7a-011c-48a4-89f6-606ef7886b3e'
+
+test('a workspace on a paired server nested under a bot here sits in that bot\'s room', () => {
+  const local = { result: { worktrees: [TRACKER_HOME, { worktreeId: 'i1', repo: 'infra', displayName: 'chief-of-stack', agents: [{ paneKey: 'pi', state: 'working' }] }] } }
+  const snap = toSnapshot(local, 1, [{ environment: LANE_POC2, raw: { result: { worktrees: [TTM_2496] } } }])
+  // not in the platform team, which nobody else works in, so it stays off the floor
+  assert.deepEqual(snap.floors.map((f) => f.repo), ['infra'])
+  const [bot] = snap.bots
+  assert.equal(bot.id, 'Product v4 tracker')
+  assert.deepEqual(bot.desks.map((d) => [d.id, d.repo, d.label, d.bot, d.host]), [
+    [`${LANE_POC2}|${TTM_2496.worktreeId}`, 'platform', 'TTM-2496', 'Product v4 tracker', 'lane-poc2']
+  ])
+  assert.equal(bot.state, 'asleep') // its own chat is closed; the desk is busy all the same
+})
+
+test('children of a bot\'s workspace, and their children, sit in the bot\'s room too', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        home('Libby', [chat('idle')], { worktreeId: 'folder:a5c0', identity: undefined }),
+        // under the bot by lineage only, as Orca writes it for a workspace the bot made
+        { worktreeId: 'r1::/w/site', repo: 'site', displayName: 'SITE-1', workspaceLineage: { parentWorkspaceKey: 'folder:a5c0', parentInstanceId: 'a5c0' }, agents: [] },
+        // a child of that one, by parentWorktreeId, and a grandchild by parent.selector
+        { worktreeId: 'r1::/w/site-2', repo: 'site', displayName: 'SITE-2', parentWorktreeId: 'r1::/w/site', agents: [{ paneKey: 'p2', state: 'working' }] },
+        { worktreeId: 'r1::/w/site-3', repo: 'site', displayName: 'SITE-3', parent: { selector: 'id:r1::/w/site-2', environment: { id: 'local' } }, agents: [] },
+        // under the bot by instance id alone
+        { worktreeId: 'r2::/w/api', repo: 'api', displayName: 'API-9', workspaceLineage: { parentInstanceId: 'a5c0' }, agents: [] },
+        // an ordinary team beside it keeps its desk
+        { worktreeId: 'r1::/w/site-9', repo: 'site', displayName: 'SITE-9', agents: [{ paneKey: 'p9', state: 'working' }] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors.map((f) => [f.repo, f.desks.map((d) => d.label)]), [['site', ['SITE-9']]])
+  const [libby] = snap.bots
+  assert.deepEqual(libby.desks.map((d) => [d.label, d.bot, d.parentId]), [
+    ['SITE-1', 'Libby', null],
+    ['SITE-2', 'Libby', 'r1::/w/site'],
+    ['SITE-3', 'Libby', null],
+    ['API-9', 'Libby', null]
+  ])
+  assert.equal(libby.state, 'watching')
+})
+
+test('a parent chain that loops, or ends nowhere, leaves its workspaces with their project', () => {
+  const raw = {
+    result: {
+      worktrees: [
+        home('Libby', [chat('idle')]),
+        { worktreeId: 'a', repo: 'web', displayName: 'WEB-1', parentWorktreeId: 'b', agents: [{ paneKey: 'pa', state: 'working' }] },
+        { worktreeId: 'b', repo: 'web', displayName: 'WEB-2', parentWorktreeId: 'a', agents: [] },
+        { worktreeId: 'c', repo: 'web', displayName: 'WEB-3', parent: { selector: 'folder:gone', environment: { id: 'local' } }, agents: [] }
+      ]
+    }
+  }
+  const snap = toSnapshot(raw, 1)
+  assert.deepEqual(snap.floors.map((f) => f.desks.map((d) => d.label)), [['WEB-1', 'WEB-2', 'WEB-3']])
+  assert.deepEqual(snap.bots[0].desks, [])
+})
+
+test('a workspace that names its own bot keeps it, whatever its parent says', () => {
+  const owners = botOwners([
+    { w: home('Libby'), environment: null },
+    { w: home('Triage'), environment: null },
+    { w: { worktreeId: 'x', bot: 'Triage', parent: { selector: 'folder:Libby', environment: { id: 'local' } } }, environment: null }
+  ])
+  assert.deepEqual([...owners.values()].map((o) => o.name), ['Libby', 'Triage', 'Triage'])
+})
+
+test('desks in one bot room on projects of the same name get their owner, others do not', () => {
+  const main = (org: string, repoId: string, bot = 'Libby') => ({
+    worktreeId: `${repoId}::/code/${org}/website`, repoId, repo: 'website', path: `/code/${org}/website`, displayName: 'main',
+    isMainWorktree: true, bot, agents: []
+  })
+  const raw = {
+    result: {
+      worktrees: [
+        home('Libby', [chat('working')]),
+        main('palulabs', 'r-p'),
+        main('studystars', 'r-s'),
+        // a worktree of kimbigames' website: its owner comes from the main checkout's folder
+        main('kimbigames', 'r-k', 'Nobody'),
+        { worktreeId: 'r-k::/orca/website/fix', repoId: 'r-k', repo: 'website', path: '/orca/website/fix', displayName: 'fix-nav', bot: 'Libby', agents: [] },
+        { worktreeId: 'r-o::/code/x/orca-tycoon', repoId: 'r-o', repo: 'orca-tycoon', path: '/code/x/orca-tycoon', displayName: 'main', isMainWorktree: true, bot: 'Libby', agents: [] }
+      ]
+    }
+  }
+  const libby = toSnapshot(raw, 1).bots.find((b) => b.name === 'Libby')!
+  assert.deepEqual(libby.desks.map((d) => [d.repo, d.org]), [
+    ['website', 'palulabs'],
+    ['website', 'studystars'],
+    ['website', 'kimbigames'],
+    ['orca-tycoon', null]
+  ])
 })

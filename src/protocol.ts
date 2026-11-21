@@ -51,6 +51,11 @@ export type Desk = {
   staff: Staff[]
   /** The bot that runs this desk (its Bot.id); null when none, or on an Orca that does not say. */
   bot: string | null
+  /**
+   * The owner or org folder of its project, only in a bot's room where another desk works in a
+   * different project of the same name: `kimbigames` beside `palulabs` for two `website`s.
+   */
+  org: string | null
   /** Set when an automation made this workspace: its name, or null when Orca only says one did. */
   automation: { name: string | null } | null
 }
