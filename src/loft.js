@@ -8,7 +8,7 @@
 // The panel keeps the mechanics (breaks, specialists coming and going, Palú, clicks); this file
 // owns where things are and how they look.
 
-import { C, XMAS, christmasTree, festive, festiveHeadgear, glyph, holidayLights, look, lounger, roleColor, walker } from './sprites.js'
+import { C, XMAS, christmasTree, dimmed, festive, festiveHeadgear, glyph, holidayLights, look, lounger, roleColor, walker } from './sprites.js'
 
 const INK = '#1d1b26'
 export const OUTER = 4 // the side walls
@@ -27,6 +27,24 @@ const ROOM_PAD = 6
 const ROOM_MIN = ISL_W + ROOM_PAD * 2
 /** Narrower than this and not even one room fits beside the walkway. */
 export const LOFT_MIN_W = ROOM_MIN + SPINE + OUTER * 2 + 4
+// A bot stands at the head of its island, on a podium at the island's left end.
+const HEAD_W = 20
+const PODIUM_W = 16
+const BOT_ROOM_MIN = ROOM_MIN + HEAD_W - ROOM_PAD
+// The coordinator's room at the right end of the hangout, its curtain included.
+const COORD_W = 64
+const COORD_WIDE = 236 // the wide hangout still fits beside the coordinator's room down to this
+
+/**
+ * The narrowest the loft is drawn with these bots in it: a bot room needs floor for its head, and
+ * the coordinator's room needs the hangout to make room for it.
+ */
+export function loftMinW({ heads = false, coordinator = false } = {}) {
+  const rooms = (heads ? BOT_ROOM_MIN : ROOM_MIN) + SPINE + OUTER * 2 + 4
+  // the stacked hangout needs 96 across for its furniture, a way down from the floor beside it
+  // and the room
+  return coordinator ? Math.max(rooms, 96 + 26 + COORD_W + OUTER * 2 + 4) : rooms
+}
 const HANG_WIDE = 270 // the hangout spreads out from this width, else it stacks
 // Fill order inside an island: the front row first, its screens face you; then the back row.
 const FILL = [3, 4, 5, 0, 1, 2]
@@ -105,32 +123,45 @@ const HALF_BLOCK = 58 // a half island (one row of three) with its team's name o
  * The office at one scale. A team of up to three desks gets half an island, a bigger one full
  * islands of six; two small teams share a room. Rooms go two to a row when the floor is wide
  * enough, else one; each row of rooms ends in a curtain line; the hangout sits halfway.
+ *
+ * `bots` is `{ list, coordinator }`: the bots on the floor and the id of the one picked as the
+ * coordinator, or null. Each bot gets a room of its own, ordered first, its desks at one island
+ * like a team's and the bot at the island's head; the coordinator has a room in the hangout
+ * instead, and only its desks get an island, with nobody at the head.
  */
-export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null) {
-  const artW = Math.max(LOFT_MIN_W, Math.floor(cssW / scale))
+export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null, bots = null) {
+  const shownBots = bots?.list ?? []
+  const coordBot = shownBots.find((b) => b.id === bots?.coordinator) ?? null
+  const heads = shownBots.some((b) => b !== coordBot)
+  const artW = Math.max(loftMinW({ heads, coordinator: Boolean(coordBot) }), Math.floor(cssW / scale))
   const x0 = OUTER + 2
   const floorW = artW - OUTER * 2 - 4
-  const cols = floorW >= ROOM_MIN * 2 + SPINE ? 2 : 1
+  const cols = floorW >= (heads ? BOT_ROOM_MIN : ROOM_MIN) * 2 + SPINE ? 2 : 1
   const colW = Math.floor((floorW - SPINE) / cols)
   const spineX = x0 + colW
   const colX = [x0, spineX + SPINE]
-  const perRow = Math.max(1, Math.floor((colW - ROOM_PAD * 2 + 8) / (ISL_W + 8)))
+  const perRowOf = (head) => Math.max(1, Math.floor((colW - ROOM_PAD * 2 - (head ? HEAD_W : 0) + 8) / (ISL_W + 8)))
 
   const busy = (floor) => floor.desks.some((d) => d.staff.length > 0)
+  const teamOf = (floor, memoryKey = floor.repo, bot = null, head = false) => {
+    const units = floor.desks.length ? assignSlots(memoryKey === floor.repo ? floor : { ...floor, repo: memoryKey }, helpers) : []
+    const last = Math.max(0, ...units.map((u) => u.n))
+    const half = last < 3
+    const islands = half ? 1 : Math.ceil((last + 1) / 6)
+    const rows = half ? 1 : Math.ceil(islands / perRowOf(head))
+    return { floor, units, half, islands, rows, h: half ? HALF_BLOCK : rows * FULL_BLOCK, bot, head }
+  }
   const teams = (snapshot?.floors ?? [])
     .filter(busy)
-    .map((floor) => {
-      const units = assignSlots(floor, helpers)
-      const last = Math.max(0, ...units.map((u) => u.n))
-      const half = last < 3
-      const islands = half ? 1 : Math.ceil((last + 1) / 6)
-      const rows = half ? 1 : Math.ceil(islands / perRow)
-      return { floor, units, half, islands, rows, h: half ? HALF_BLOCK : rows * FULL_BLOCK }
-    })
+    .map((floor) => teamOf(floor))
     .sort((a, b) => b.units.length - a.units.length || a.floor.repo.localeCompare(b.floor.repo))
+  // a bot's room: its desks, named after it; the coordinator's only when it runs desks
+  const botTeams = shownBots
+    .filter((bot) => bot !== coordBot || bot.desks.length)
+    .map((bot) => teamOf({ repo: bot.name, desks: bot.desks }, `\u0000bot|${bot.id}`, bot, bot !== coordBot))
 
-  // Rooms: a big team has one to itself; small teams pair up, two to a room.
-  const roomPlans = []
+  // Rooms: a bot's first, one each; then a big team has one to itself; small teams pair up.
+  const roomPlans = botTeams.map((t) => [t])
   const small = []
   for (const team of teams) (team.half ? small : roomPlans).push([team])
   for (let i = 0; i < small.length; i += 2) roomPlans.push(small.slice(i, i + 2).map((t) => t[0]))
@@ -144,7 +175,9 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null) {
     bands.push({ band, h: 26 + Math.max(...band.map(contentH)) })
   }
   const naturalWorkH = bands.reduce((sum, band) => sum + band.h, 0)
-  const naturalCommon = hangout(x0, WALL + naturalWorkH + 8, floorW)
+  // on one column the walkway by the right wall is where the coordinator's room goes
+  const oneCol = cols === 1 ? spineX : null
+  const naturalCommon = hangout(x0, WALL + naturalWorkH + 8, floorW, Boolean(coordBot), oneCol)
   const naturalH = naturalCommon.y + naturalCommon.h + 6
   const extraWorkH = Math.max(0, (targetH ?? naturalH) - naturalH)
   const perBand = bands.length ? Math.floor(extraWorkH / bands.length) : 0
@@ -167,19 +200,29 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null) {
       let cursor = top + contentOffset
       for (const team of plan) {
         const ref = { name: team.floor.repo }
+        if (team.bot) {
+          ref.bot = team.bot
+          room.bot = team.bot
+        }
+        const head = team.head ? HEAD_W : 0
         const isles = []
         if (team.half) {
-          const isl = { x: room.x + Math.floor((colW - ISL_W) / 2), y: cursor + 14, half: true, cells: Array(3).fill(null), team: plan.length > 1 ? team.floor.repo : null }
-          isles.push(isl)
+          const ix = room.x + Math.floor((colW - ISL_W - head) / 2) + head
+          if (team.units.length) isles.push({ x: ix, y: cursor + 14, half: true, cells: Array(3).fill(null), team: plan.length > 1 ? team.floor.repo : null })
+          // the head stands on its podium at the island's left end, level with the chairs
+          if (team.head) room.head = { bot: team.bot, x: ix - head + 2, y: cursor + 14 + 22 }
         } else {
+          const perRow = perRowOf(team.head)
           for (let i = 0; i < team.islands; i++) {
             const row = Math.floor(i / perRow)
             const inRow = Math.min(perRow, team.islands - row * perRow)
             const rowW = inRow * ISL_W + (inRow - 1) * 8
-            const ix = room.x + Math.floor((colW - rowW) / 2) + (i % perRow) * (ISL_W + 8)
+            const ix = room.x + Math.floor((colW - rowW - head) / 2) + head + (i % perRow) * (ISL_W + 8)
             isles.push({ x: ix, y: cursor + 22 + row * FULL_BLOCK, half: false, cells: Array(6).fill(null), team: null })
           }
+          if (team.head) room.head = { bot: team.bot, x: isles[0].x - head + 2, y: isles[0].y + ID + 22 }
         }
+        if (team.bot) for (const isl of isles) isl.bot = team.bot
         room.islands.push(...isles)
         for (const u of team.units) {
           const island = team.half ? isles[0] : isles[Math.floor(u.n / 6)]
@@ -226,13 +269,26 @@ export function layoutLoft(snapshot, cssW, scale, helpers, targetH = null) {
     lines.push(bottom)
     top = bottom
   }
-  common = hangout(x0, top + 8, floorW)
+  common = hangout(x0, top + 8, floorW, Boolean(coordBot), oneCol)
   let h = common.y + common.h + 6
   // The last curtain is the leisure area's own bulkhead. Keep it attached to the module when the
   // module docks to the bottom of a tall panel; the earlier lines remain workstation separators.
   if (lines.length) lines[lines.length - 1] = common.y
+  else if (coordBot) lines.push(common.y) // the coordinator's room needs its back curtain
   const building = { w: artW, h, doorY: common.doorY, x0, floorW, spineX, cols }
-  return { theme: 'loft', artW, artH: h, scale, building, rooms, seats, common, lines, teamCount: teams.length }
+  const coordinator = coordBot ? coordinatorPlan(coordBot, common.coord, rooms) : null
+  return { theme: 'loft', artW, artH: h, scale, building, rooms, seats, common, lines, teamCount: teams.length, coordinator }
+}
+
+/**
+ * Where the coordinator sits, waits and walks: its chair behind the desk, the gap in its back
+ * curtain, and a stop at the head of every other bot's island. The panel adds the desks that need
+ * you, which change between polls.
+ */
+function coordinatorPlan(bot, room, rooms) {
+  // it stands in front of the podium, low enough that what it says leaves the bot on it in view
+  const stops = rooms.filter((r) => r.head).map((r) => ({ at: { x: r.head.x + 2, y: r.head.y + 14 }, say: `Checking on ${r.head.bot.name}` }))
+  return { bot, room, home: room.home, entrance: room.entrance, stops }
 }
 
 const DRAWER_W = 12
@@ -243,8 +299,8 @@ const DRAWER_W = 12
  * from the room's name, so a room keeps its look.
  */
 function drawerBlocks(room) {
-  const left = Math.min(...room.islands.map((i) => i.x))
-  const right = Math.max(...room.islands.map((i) => i.x + ISL_W))
+  const left = Math.min(...room.islands.map((i) => i.x), ...(room.head ? [room.head.x - 2] : []))
+  const right = Math.max(...room.islands.map((i) => i.x + ISL_W), ...(room.head ? [room.head.x + PODIUM_W] : []))
   const spots = []
   if (left - room.x >= DRAWER_W + 2) spots.push(room.x + 1)
   if (room.x + room.w - right >= DRAWER_W + 2) spots.push(room.x + room.w - DRAWER_W - 1)
@@ -257,23 +313,27 @@ function drawerBlocks(room) {
 /** The hangout: phone booths, the coffee corner, the sofa on the pink rug, foosball, a bar. */
 const HANG_MAX = 330 // wider than this, the hangout keeps its size in the middle of the floor
 
-function hangout(fx, y, fw) {
+function hangout(fx, y, fw, coord = false, spine = null) {
   const w = Math.min(fw, HANG_MAX)
   const x = fx + Math.floor((fw - w) / 2)
-  const R = x + w
+  const full = x + w
+  // the coordinator's room takes the right end; the furniture lays itself out in what is left
+  const R = coord ? full - COORD_W : full
   const c = { x, y, w, things: [] }
   const add = (kind, props) => {
     const thing = { kind, ...props }
     c.things.push(thing)
     return thing
   }
-  const wide = w >= HANG_WIDE
+  const wide = coord ? R - x >= COORD_WIDE : w >= HANG_WIDE
   if (wide) {
     c.h = 104
     const booths = [add('booth', { x: x + 4, floor: y + 50 }), add('booth', { x: x + 27, floor: y + 50 })]
-    const counter = add('counter', { x: R - 110, y: y + 6, w: 80 })
+    // beside the coordinator's room the kitchen gets shorter
+    const counterW = Math.max(56, Math.min(80, 80 - (HANG_WIDE - (R - x))))
+    const counter = add('counter', { x: R - 30 - counterW, y: y + 6, w: counterW })
     add('fridge', { x: R - 28, floor: y + 21 })
-    add('cooler', { x: R - 120, floor: y + 22 })
+    add('cooler', { x: counter.x - 10, floor: y + 22 })
     const rug = add('rug', { x: x + 56, y: y + 18, w: Math.min(124, w - 166), h: 74 })
     const sofa = add('sofa', { x: rug.x + 16, y: rug.y + 4, w: Math.max(40, rug.w - 68) })
     add('coffeeTable', { x: sofa.x + Math.floor(sofa.w / 2) - 12, y: rug.y + 24 })
@@ -291,12 +351,17 @@ function hangout(fx, y, fw) {
     c.bowls = { x: x + 4, y: y + 91 }
     c.doorY = y + 56
     finish(c, { booths, counter, sofa, foos, chairs })
+    if (coord) c.coord = coordinatorRoom(R, y, c.h, full < fx + fw - 1)
   } else {
     // The right edge stays clear: it lines up with the gaps in the curtain lines, so people walk
     // straight down from their rooms. Booth, fridge and counter stand against the curtain, the
     // sofa corner below them, foosball and Palú's corner below that.
     c.h = 140
-    const clear = R - 34
+    // With the coordinator on one column, its room takes the walkway under the curtain's gap by
+    // the right wall, and the lounge gets a gap of its own beside the room. On two columns the
+    // room stands just left of the walkway.
+    const corner = coord && spine !== null
+    const clear = corner ? full - COORD_W - 26 : full - 34 - (coord ? COORD_W : 0)
     const booths = [add('booth', { x: x + 4, floor: y + 46 })]
     add('fridge', { x: x + 28, floor: y + 21 })
     add('cooler', { x: x + 44, floor: y + 22 })
@@ -325,8 +390,57 @@ function hangout(fx, y, fw) {
     if (treeR - treeL >= 17) add('tree', { x: Math.round((treeL + treeR) / 2) - 7, y: y + 97 })
     c.doorY = y + 94
     finish(c, { booths, counter, sofa, foos, chairs })
+    if (corner) {
+      c.coord = coordinatorRoom(full - COORD_W, y, c.h, false, spine)
+      c.loungeGap = { x: full - COORD_W - 22, w: 18 }
+    } else if (coord) c.coord = coordinatorRoom(clear, y, c.h, true)
   }
   return c
+}
+
+/**
+ * The coordinator's room, `COORD_W` wide from `rx`, from the hangout's back curtain to the
+ * front: a curtain down its left side closes it off from the lounge (and one down its right side
+ * when the floor goes on past it), so its only way in is a gap in the back curtain at its right.
+ * Inside, on a navy rug: the floor map on a stand, a big desk with a terminal, two stools for
+ * visitors and two plants.
+ */
+function coordinatorRoom(rx, y, h, rightCurtain, spine = null) {
+  const in0 = rx + 5
+  const in1 = rx + COORD_W - (rightCurtain ? 5 : 0)
+  const iw = in1 - in0
+  const desk = { x: in0 + Math.floor((iw - 40) / 2), y: y + Math.round(h * 0.6) }
+  // its way in: a gap of its own in the back curtain, or, by the right wall, the walkway's gap
+  // past the column
+  const gap = spine === null ? { x: in1 - 20, w: 18, own: true } : { x: spine + 10, w: in1 - spine - 10, own: false }
+  return {
+    x: rx,
+    y,
+    w: COORD_W,
+    h,
+    in0,
+    in1,
+    rightCurtain,
+    gap,
+    // its sign hangs on the back curtain over its way in, like a sign over a door; by the right
+    // wall it stops short of the column
+    signMax: (spine === null ? in1 : spine) - 2 - (in0 + 2),
+    rug: { x: in0 + 2, y: y + 30, w: iw - 4, h: h - 34 },
+    board: { x: in0 + 2, y: y + 4 },
+    desk,
+    stools: [
+      { x: desk.x + 6, y: desk.y + 18 },
+      { x: desk.x + 27, y: desk.y + 18 }
+    ],
+    plants: [
+      { x: in0 + 1, y: y + h - 17 },
+      { x: in1 - 10, y: y + h - 17 }
+    ],
+    // where it sits behind its desk, where it stands to sit down, and where it waits for you
+    seat: { x: desk.x + 14, y: desk.y - 12 },
+    home: { x: desk.x + 16, y: desk.y - 15 },
+    entrance: { x: gap.x + Math.min(5, gap.w - 11), y: y + 4 }
+  }
 }
 
 /** The round white table with four tulip chairs: two behind it facing you, two in front. */
@@ -385,8 +499,18 @@ export const loftGeometry = {
     const boxes = [[0, 0, artW, WALL + 2]]
     for (const room of layout.rooms) for (const isl of room.islands) boxes.push(isl.half ? [isl.x - 8, isl.y - 6, ISL_W + 16, 42] : [isl.x - 8, isl.y - 10, ISL_W + 16, ID + 46])
     for (const line of layout.lines) {
-      boxes.push(...curtainSegments(layout).map(([sx, w]) => [sx, line - 3, w, 3]))
+      boxes.push(...curtainSegments(layout, line).map(([sx, w]) => [sx, line - 3, w, 3]))
       boxes.push([b.spineX, line - 4, 10, 5])
+    }
+    for (const room of layout.rooms) if (room.head) boxes.push([room.head.x - 1, room.head.y - 1, PODIUM_W + 2, 7])
+    const k = layout.common.coord
+    if (k) {
+      // down to the bottom wall, so nobody slips round its foot
+      boxes.push([k.x, k.y - 3, 5, k.h + 12])
+      if (k.rightCurtain) boxes.push([k.in1, k.y - 3, 5, k.h + 12])
+      boxes.push([k.board.x, k.board.y + 16, 32, 7], [k.desk.x, k.desk.y + 3, 40, 8])
+      for (const s of k.stools) boxes.push([s.x, s.y + 2, 7, 4])
+      for (const pl of k.plants) boxes.push([pl.x + 1, pl.y + 10, 8, 5])
     }
     const c = layout.common
     for (const t of c.things) {
@@ -414,12 +538,34 @@ export const loftGeometry = {
   }
 }
 
-function curtainSegments(layout) {
+function curtainSegments(layout, line = null) {
   const { x0, floorW, spineX } = layout.building
-  return [
+  const segments = [
     [x0 - 2, spineX - x0 + 2],
     [spineX + SPINE, x0 + floorW - spineX - SPINE + 2]
   ].filter(([, w]) => w > 0)
+  // the hangout's back curtain opens onto the coordinator's room at the room's right side, and
+  // onto the lounge beside the room when the room took the walkway
+  const gaps = line !== null && line === layout.common?.y ? curtainGaps(layout.common) : []
+  return gaps
+    .reduce(
+      (list, gap) =>
+        list.flatMap(([sx, w]) => {
+          const end = sx + w
+          if (gap.x >= end || gap.x + gap.w <= sx) return [[sx, w]]
+          return [
+            [sx, gap.x - sx],
+            [gap.x + gap.w, end - gap.x - gap.w]
+          ]
+        }),
+      segments
+    )
+    .filter(([, w]) => w > 0)
+}
+
+/** The gaps the hangout's back curtain has beyond the walkway's: the coordinator's and the lounge's. */
+function curtainGaps(c) {
+  return [c.coord?.gap.own ? c.coord.gap : null, c.loungeGap ?? null].filter(Boolean)
 }
 
 /** The floor a piece of hangout furniture stands on. */
@@ -1584,6 +1730,13 @@ export function drawLoft(ctx, layout, world) {
   if (festive()) season(p, layout, t)
   const c = layout.common
   const scene = []
+  const colorOf = (bot) => world.bots?.colors?.get(bot.id) ?? { body: '#e0786c', belly: '#eb9a8f' }
+  if (c.coord) coordinatorRug(p, c.coord)
+  for (const room of layout.rooms) if (room.head) scene.push({ base: room.head.y + 5, paint: () => botHead(p, room.head, colorOf(room.head.bot), t) })
+  if (c.coord && layout.coordinator) {
+    const all = [...(world.bots?.colors?.values() ?? [])]
+    coordinatorPieces(p, c.coord, layout.coordinator.bot, colorOf(layout.coordinator.bot), all, world.bots?.chiefSeated !== false, t, scene)
+  }
   // the room signs on the window, for the first row of rooms
   for (const room of layout.rooms) if (room.first) sign(p, room.x + 4, 2, signW(room))
   for (const room of layout.rooms) for (const isl of room.islands) scene.push({ base: isl.y + (isl.half ? 0 : ID) + 34, paint: () => island(p, ctx, isl, world) })
@@ -1591,9 +1744,18 @@ export function drawLoft(ctx, layout, world) {
     scene.push({
       base: line,
       paint: () => {
-        for (const [sx, w] of curtainSegments(layout)) {
+        for (const [sx, w] of curtainSegments(layout, line)) {
           backCurtain(p, sx, w, line)
           if (festive()) holidayLights(at(p, sx, line - 27), w, t)
+        }
+        // the coordinator's way in, and the lounge's beside it: gaps in the curtain between posts
+        if (line === c.y) {
+          for (const gap of curtainGaps(c)) {
+            p(gap.x - 1, line - 26, 1, 26, INK)
+            p(gap.x + gap.w, line - 26, 1, 26, INK)
+          }
+          // and its sign, like every room's
+          if (c.coord && layout.coordinator) sign(p, c.coord.in0 + 2, line - 25, coordSignW(c.coord, layout.coordinator.bot))
         }
         pillar(p, layout.building.spineX, line + 2)
         for (const room of layout.rooms) if (room.y === line) sign(p, room.x + 4, line - 25, signW(room))
@@ -1657,6 +1819,14 @@ export function drawLoft(ctx, layout, world) {
     const y = room.first ? 2 : room.y - 25
     if (shown(y + 5)) world.drawText(room.name, (room.x + 8) * s, (y + 5) * s, (signW(room) - 6) * s, C.white, { weight: 700 })
   }
+  const k = c.coord
+  if (k && layout.coordinator && shown(k.y - 20)) {
+    const w = coordSignW(k, layout.coordinator.bot)
+    const name = layout.coordinator.bot.name
+    // a smaller letter before a cut-off name, so the whole name shows on a narrow room
+    const fits = Math.floor(((w - 4) * s) / (name.length * 0.62))
+    world.drawText(name, (k.in0 + 5) * s, (k.y - 20) * s, (w - 4) * s, C.white, { weight: 700, size: Math.max(8, Math.min(12, Math.round(s * 3.4), fits)) })
+  }
   const size = Math.max(9, Math.min(12, Math.round(s * 3.4)))
   for (const seat of layout.seats) {
     if (!shown(seat.island.y + (seat.front ? seat.row0 + 25 : 5))) continue
@@ -1666,6 +1836,7 @@ export function drawLoft(ctx, layout, world) {
     const maxW = (IW - 3) * s
     if (seat.front) world.drawText(label, seat.cx * s, (seat.island.y + seat.row0 + 25) * s, maxW, '#e4e8f2', { align: 'center', size, chip: '#2f3a52' })
     else world.drawText(label, seat.cx * s, (seat.island.y + 5) * s, maxW, '#23212b', { align: 'center', size, chip: '#f1efe8' })
+    if (seat.island.bot) projectTag(world, seat, s, size)
   }
   for (const room of layout.rooms) {
     for (const isl of room.islands) {
@@ -1678,9 +1849,19 @@ export function drawLoft(ctx, layout, world) {
         const maxW = (IW - 3) * s
         if (cell.front) world.drawText(cell.label, cell.cx * s, (isl.y + cell.row0 + 25) * s, maxW, '#9aa0b4', { align: 'center', size, chip: '#3a3f4f' })
         else world.drawText(cell.label, cell.cx * s, (isl.y + 5) * s, maxW, '#6b6a75', { align: 'center', size, chip: '#d9d6cf' })
+        if (isl.bot) projectTag(world, { ...cell, island: isl }, s, size)
       }
     }
   }
+}
+
+/**
+ * The little tag under a desk's nameplate in a bot's room: the project it works in. A front-row
+ * desk has it below the nameplate on its chair, a back-row desk on the desk below its monitor.
+ */
+function projectTag(world, seat, s, size) {
+  const y = seat.front ? seat.island.y + seat.row0 + 30.5 : seat.island.y + 10.5
+  world.drawText(seat.desk.repo ?? '', seat.cx * s, y * s, (IW - 3) * s, '#23212b', { align: 'center', size: Math.max(8, size - 2), chip: '#f1efe8' })
 }
 
 /** Christmas over the hall: lights along the window ledge, snow falling past the steel frames and a
@@ -1695,6 +1876,10 @@ function season(p, layout, t) {
   holidayLights(at(p, 0, WALL - 5), artW, t)
   p(OUTER, building.doorY + 1, 3, 14, '#b4202a')
   p(OUTER + 1, building.doorY + 3, 1, 10, '#238547')
+}
+
+function coordSignW(k, bot) {
+  return Math.min(k.signMax, bot.name.length * 4 + 14)
 }
 
 function signW(room) {
@@ -1734,6 +1919,198 @@ export function sitting(p, chair, staff, t, talking) {
     const dots = 1 + ((t >> 2) % 3)
     for (let i = 0; i < dots; i++) p(x + 1 + i * 2, y - 14, 1, 1, INK)
   }
+}
+
+// ---- bots ----------------------------------------------------------------------------------------
+// A bot is its mascot: 12 x 12, outlined like everything in the loft, with a headset. B body,
+// L belly, H headset, T the mic tip. Its eyes and mouth are painted over by state.
+
+const BOT_BODY = ['....BBBB....', '..BBBBBBBB..', '.BBBBBBBBBB.', 'HBBLLLLLLBBB', 'HBLLLLLLLLBB', 'HBLLLLLLLLBB', '.BLLLLLLLLBB', '.HLLLLLLLLBB', '..TLLLLLLBBB', 'BBBBBBBBBBBB', 'BBBBBBBBBBBB', 'B.BB.BB.BB.B']
+
+/**
+ * A bot's mascot with its top-left at (x, y). `state` is a BotState: working looks down at its
+ * screen and its mic blinks, watching looks from side to side, done smiles with its eyes, blocked
+ * throws up its fins, asleep shuts its eyes and dims.
+ */
+export function botMascot(p, x, y, colors, state, t) {
+  const asleep = state === 'asleep'
+  const body = asleep ? dimmed(colors.body) : colors.body
+  const belly = asleep ? dimmed(colors.belly) : colors.belly
+  const oy = asleep ? 1 : 0
+  ol(p, (q) => {
+    BOT_BODY.forEach((row, j) => {
+      for (let i = 0; i < row.length; i++) {
+        const col = { B: body, L: belly, H: INK, T: state === 'working' && t % 4 < 2 ? C.green : C.amber }[row[i]]
+        if (col) q(x + i, y + oy + j, 1, 1, col)
+      }
+    })
+    if (state === 'blocked') {
+      q(x - 1, y + 2 + oy, 1, 3, body)
+      q(x + 12, y + 2 + oy, 1, 3, body)
+    }
+  })
+  const e = (i, j) => p(x + i, y + oy + j, 1, 1, INK)
+  if (asleep || (t % 30 === 0 && state !== 'done')) {
+    e(2, 6)
+    e(3, 6)
+    e(8, 6)
+    e(9, 6)
+  } else if (state === 'done') {
+    e(3, 5)
+    e(2, 6)
+    e(4, 6)
+    e(8, 5)
+    e(7, 6)
+    e(9, 6)
+  } else {
+    const dy = state === 'working' ? 1 : 0
+    const dx = state === 'watching' ? ((t >> 3) % 2 ? 1 : -1) : 0
+    for (const i of [3, 8]) {
+      e(i + dx, 5 + dy)
+      e(i + dx, 6 + dy)
+    }
+  }
+  if (state === 'blocked') {
+    e(5, 7)
+    e(6, 7)
+    e(4, 8)
+    e(7, 8)
+  } else if (state === 'done') {
+    e(4, 7)
+    e(7, 7)
+    e(5, 8)
+    e(6, 8)
+  } else if (!asleep) {
+    e(5, 8)
+    e(6, 8)
+  }
+  if (festive()) ol(p, (q) => cap(q, x + 4, y + oy, 'santa'))
+}
+
+/** The ? over a bot that waits for you, the ! over a stuck one, the z over one asleep. */
+function botMarks(p, cx, head, state, t) {
+  if (state === 'waiting' && (t >> 2) % 2) ol(p, (q) => glyph(q, '?', cx - 1, head - 8, C.amber))
+  if (state === 'blocked') ol(p, (q) => glyph(q, '!', cx - 1, head - 8, C.red))
+  if (state === 'asleep') {
+    const z = t % 16
+    if (z < 12) ol(p, (q) => glyph(q, 'z', cx + 5 + (z >> 2), head - 3 - (z >> 2), C.white))
+  }
+}
+
+/** A bot standing or walking about, its feet on the row a person's (y + 15) would be on. */
+export function standingBot(p, x, y, colors, state, t, moving) {
+  const bob = moving ? t % 2 : 0
+  botMascot(p, x - 2, y + 3 - bob, colors, state, t)
+  botMarks(p, x + 4, y + 3 - bob, state, t)
+}
+
+/** The small navy podium a bot stands on at the head of its island. */
+function podium(p, x, y) {
+  shadow(p, x + 1, y + 5, PODIUM_W, 2)
+  ol(p, (q) => {
+    q(x, y, PODIUM_W, 2, '#f4eedf')
+    q(x, y + 2, PODIUM_W, 3, NAVY[1])
+  })
+  for (let i = 2; i < PODIUM_W; i += 4) p(x + i, y + 2, 1, 3, NAVY[3])
+}
+
+/** A bot at the head of its island, on its podium. */
+function botHead(p, head, colors, t) {
+  const state = head.bot.state
+  const bob = state === 'working' ? t % 2 : 0
+  podium(p, head.x, head.y)
+  botMascot(p, head.x + 2, head.y - 12 - bob, colors, state, t)
+  botMarks(p, head.x + 8, head.y - 12 - bob, state, t)
+}
+
+/** The floor map on its stand: a bar in each bot's colour, lines to the desks they run. */
+function floorMap(p, x, y, colors, t) {
+  ol(p, (q) => {
+    q(x + 4, y + 16, 1, 6, '#7d8296')
+    q(x + 27, y + 16, 1, 6, '#7d8296')
+    q(x + 2, y + 21, 5, 1, '#7d8296')
+    q(x + 25, y + 21, 5, 1, '#7d8296')
+    q(x, y, 32, 16, '#b9bccb')
+  })
+  p(x + 1, y + 1, 30, 14, '#f4f5fa')
+  const shown = colors.slice(0, 4)
+  shown.forEach((c, i) => {
+    const ry = y + 2 + i * 3
+    p(x + 2, ry, 7, 2, c.body)
+    p(x + 10, ry + 1, 8, 1, '#c9ccd8')
+    p(x + 19 + (i % 2) * 4, ry, 2, 2, c.body)
+  })
+  if (!shown.length) p(x + 3, y + 4, 20, 1, '#c9ccd8')
+  // a dot that walks the round on the map
+  p(x + 20 + ((t >> 2) % 9), y + 12, 1, 1, C.red)
+}
+
+const SALMON = ['#e0786c', '#b4564c']
+
+/** The coordinator's room, everything but its rug: the map, the desk, the stools and the plants. */
+function coordinatorPieces(p, k, bot, colors, all, seated, t, scene) {
+  const state = bot.state
+  scene.push({ base: k.board.y + 22, paint: () => floorMap(p, k.board.x, k.board.y, all, t) })
+  scene.push({
+    base: k.desk.y + 11,
+    paint: () => {
+      const { x, y } = k.desk
+      if (seated) {
+        const bob = state === 'working' ? t % 2 : 0
+        botMascot(p, k.seat.x, k.seat.y - bob, colors, state, t)
+        botMarks(p, k.seat.x + 6, k.seat.y - bob, state, t)
+      } else {
+        ol(p, (q) => {
+          q(x + 15, y - 9, 10, 6, '#4b4a5e')
+          q(x + 16, y - 8, 8, 4, '#5d5c72')
+        })
+      }
+      shadow(p, x + 1, y + 11, 40, 2)
+      ol(p, (q) => {
+        q(x, y, 40, 3, C.woodTop)
+        q(x, y + 3, 40, 6, C.wood)
+        q(x, y + 8, 40, 1, C.woodDark)
+        q(x + 2, y + 9, 2, 2, C.woodDark)
+        q(x + 36, y + 9, 2, 2, C.woodDark)
+      })
+      p(x + 17, y + 4, 6, 3, C.woodDark)
+      p(x + 18, y + 5, 4, 1, '#f2b134')
+      // the terminal on the desk, facing you
+      ol(p, (q) => q(x + 26, y - 7, 10, 7, '#2a2833'))
+      screen(p, x + 27, y - 6, 8, 5, state === 'watching' ? 'monitoring' : state === 'asleep' ? 'off' : state, t, false)
+    }
+  })
+  for (const s of k.stools) {
+    scene.push({
+      base: s.y + 6,
+      paint: () => {
+        shadow(p, s.x, s.y + 6, 7, 1)
+        ol(p, (q) => {
+          q(s.x, s.y, 7, 2, SALMON[0])
+          q(s.x, s.y + 2, 7, 1, SALMON[1])
+          q(s.x + 3, s.y + 3, 1, 3, '#4b4a5e')
+        })
+      }
+    })
+  }
+  for (const pl of k.plants) scene.push({ base: pl.y + 15, paint: () => plant(p, pl, t) })
+  // the curtains down its sides, in front of everything in the hangout
+  const curtain = (x) => {
+    p(x, k.y, 5, k.h, INK)
+    p(x + 1, k.y, 3, k.h, NAVY[1])
+    for (let y = k.y + 3; y < k.y + k.h; y += 4) p(x + 1, y, 3, 1, NAVY[3])
+    p(x + 3, k.y, 1, k.h, NAVY[2])
+  }
+  scene.push({ base: k.y + k.h, paint: () => curtain(k.x) })
+  if (k.rightCurtain) scene.push({ base: k.y + k.h, paint: () => curtain(k.in1) })
+}
+
+/** The coordinator's navy rug, on the floor under everything in its room. */
+function coordinatorRug(p, k) {
+  const { x, y, w, h } = k.rug
+  p(x, y, w, h, '#3f557a')
+  p(x + 2, y + 2, w - 4, h - 4, NAVY[2])
+  for (let ry = y + 6; ry < y + h - 4; ry += 7) p(x + 4, ry, w - 8, 1, '#6a84a8')
 }
 
 /** Draws a Brick sprite (from sprites.js, painted from its own corner) with the outline pass. */

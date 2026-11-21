@@ -60,8 +60,31 @@ on your `PATH`.
   reply. When one starts waiting for you an amber `?` bobs over its head and a thought bubble says
   "Need you!"; click it and it says what the prompt asks, such as "Can I go ahead? I need your OK".
   When it gets stuck it says "Stuck!".
+- **Bots have rooms of their own.** An Orca bot, the assistant people ask from Slack, Linear or
+  GitHub, comes in as its mascot: a round little sea creature with a headset, in a colour no other
+  bot on the floor has. Every desk a bot runs leaves its project's team and sits at the bot's own
+  island, in a room named after the bot. Bot rooms come first on the floor. Each desk keeps its
+  ticket nameplate and gets a small tag under it for the project it works in. The bot stands at
+  the head of its island: on a little navy podium in the loft, behind a wooden lectern in Brick.
+  A bot comes in while its own chat is open in Orca or one of its desks has an agent at work, and
+  a bot with no desks yet stands alone in its room.
+- **One bot can be the coordinator.** Pick it with the Coordinator control in the header; the
+  panel remembers it. In the loft the coordinator gets a room of its own at the right end of the
+  hangout, closed off from the lounge by a curtain, with a big desk, the floor map on a stand, two
+  stools for visitors and two plants; its only way in is a gap in the back curtain, onto the office
+  floor. In Brick its room stands beside the commons, on a navy rug with its sign, the floor map
+  on its whiteboard, a plant and a bookshelf, and its only way in is the door in its top edge,
+  onto the hallway. While it works, or keeps an eye on its desks, it walks a round: out through
+  its way in, to each desk that needs you and to the head of every other bot's island, saying what
+  it is checking ("How is WEB-160 doing?", "Checking on Release notes"), then back to its desk,
+  where it rests a little before the next round. When it waits
+  for you, it waits at its way in with an amber `?`. Its own desks still form an island in a room
+  named after it, with nobody at the head. When nothing goes on it stays, asleep at its desk.
 
-A status line along the top counts teams, staff, busy agents and how many need you.
+![Bots in the Loft: Chief of Stack, the coordinator, stops at a desk on its round to ask how DAT-11 is doing, Release notes and Triage stand at the heads of their islands, and the coordinator's room with its floor map stands at the right end of the hangout](docs/bots.png)
+
+A status line along the top counts teams, bots, staff, busy agents and how many need you. A bot
+that waits for you counts among those who need you.
 
 ## Two layouts, two appearances
 
@@ -125,6 +148,25 @@ Orca server sits with the team of its project at a thin client: a pale terminal 
 beside it whose light blinks while it works. The side panel names the server it runs on.
 If a server cannot be reached, only its desks go missing until it answers again.
 
+Bots use the same marks as everyone else, and one of their own:
+
+| Bot state | What you see |
+| --- | --- |
+| working | bobbing at its post, the light on its mic blinking green |
+| keeping an eye | its own chat is quiet but a desk it runs is busy: it looks from side to side and says "I'm keeping an eye on 3 desks" |
+| waiting for you | amber `?` over its head |
+| blocked | fins up and a red `!` |
+| done | smiling eyes, and a bubble with the first line of its last reply |
+| asleep | no chat open: eyes shut, dimmed, with a `z` |
+
+Hover over a bot for who it is and what it does, and click it for the side panel: Bot or
+Coordinator, the server it runs on, its state and task, and the desks it runs with their state. A
+desk a bot runs says "Run by" that bot on its card, and one an automation made says which
+automation made it. Orca cannot bring a bot's home folder to the front from its command line yet,
+so a bot has no Open in Orca button; open it from Orca's sidebar. A bot on a paired Orca server is
+told apart from one of the same name here, and a desk that names a bot whose home Orca does not
+list gets a bot of its own, asleep, so every bot desk has someone at its head.
+
 ![An agent finishes with a speech bubble, walks down to the commons and takes a call in a booth, then walks back to its desk when new work arrives](docs/break.gif)
 
 ![Two specialists come in through the front door one after the other and take the stools at a desk, while another finishes and walks out](docs/specialists.gif)
@@ -134,7 +176,9 @@ If a server cannot be reached, only its desks go missing until it answers again.
 Orca's plugin API (`agents.list`) only lists the agents of the focused workspace, and it has no
 subagents. To see the whole office, the worker (`src/worker.ts`) runs `orca worktree ps --json`
 instead. Orca's own sidebar and phone app draw from the same rows. The worker trims them to a small
-office model (`src/protocol.ts`): projects, seats, and each seat's specialists.
+office model (`src/protocol.ts`): projects, seats, and each seat's specialists. Orca marks a
+bot's home folder and every workspace a bot runs in those same rows, so the worker gives each bot
+its desks; an Orca that does not send those marks draws the office it always did.
 
 The panel (`src/panel.html`, `src/panel.js`, `src/sprites.js`, and `src/loft.js` for the loft) polls the worker every 3 seconds,
 the same rate Orca's phone app uses, and draws one canvas at 8 frames a second. Every sprite is

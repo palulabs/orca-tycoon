@@ -1,7 +1,8 @@
 // The glyph table behind the pixel markers: every character the panel and the sprites draw must
 // have a 3 x 5 bitmap, or glyph() silently paints nothing.
 import { assert, test } from 'orca/testing'
-import { C, GLYPHS, XMAS, christmasTree, costumeOf, festive, glyph, holidayLights, inChristmasSeason, look, setFestive, workstation } from './sprites.js'
+import { BOT_COLORS, C, GLYPHS, XMAS, botColors, brickBot, christmasTree, costumeOf, festive, glyph, holidayLights, inChristmasSeason, look, setFestive, workstation } from './sprites.js'
+import { botMascot } from './loft.js'
 
 test('every glyph the office draws exists and is 3 x 5', () => {
   for (const ch of ['?', '!', 'z', '+']) {
@@ -89,4 +90,36 @@ test('the christmas theme is offered from 15 November through 1 January only', (
   assert.equal(on(2027, 1, 1), true)
   assert.equal(on(2027, 1, 2), false)
   assert.equal(on(2027, 7, 1), false)
+})
+
+
+test('every bot on screen gets a colour of its own, the same whatever order they come in', () => {
+  const bots = ['Chief of Stack', 'Release notes', 'Triage', 'Deps', 'Docs', 'Oncall'].map((name) => ({ id: name, name }))
+  const colors = botColors(bots)
+  assert.equal(new Set([...colors.values()]).size, 6, 'two bots share a colour')
+  const again = botColors([...bots].reverse())
+  for (const bot of bots) assert.equal(again.get(bot.id), colors.get(bot.id), `${bot.name} changed colour`)
+  for (const c of colors.values()) assert.ok(BOT_COLORS.includes(c))
+  // a seventh bot starts the colours round again rather than going without
+  assert.ok(botColors([...bots, { id: 'x', name: 'Seventh' }]).get('x'))
+})
+
+test('a bot is drawn as its mascot: Brick flat in 10 x 9, the loft outlined in 12 x 12', () => {
+  const colors = BOT_COLORS[0]
+  for (const state of ['working', 'waiting', 'blocked', 'done', 'watching', 'idle', 'asleep']) {
+    const flat: number[][] = []
+    brickBot((x: number, y: number, w: number, h: number) => flat.push([x, y, w, h]), colors, state, 3)
+    for (const [x, y, w, h] of flat) assert.ok(x >= -1 && y >= 0 && x + w <= 11 && y + h <= 10, `Brick ${state} paints outside its box`)
+    const outlined: string[] = []
+    botMascot((x: number, y: number, w: number, h: number, c: string) => outlined.push(`${x},${y},${w},${h},${c}`), 0, 0, colors, state, 3)
+    assert.ok(outlined.some((p) => p.endsWith('#1d1b26')), `the loft ${state} has no outline`)
+    for (const p of outlined) {
+      const [x, y, w, h] = p.split(',').map(Number)
+      assert.ok(x >= -2 && y >= -4 && x + w <= 14 && y + h <= 14, `the loft ${state} paints outside its box`)
+    }
+  }
+  // asleep, it dims: its body colour is not the awake one
+  const asleep: string[] = []
+  brickBot((_x: number, _y: number, _w: number, _h: number, c: string) => asleep.push(c), colors, 'asleep', 0)
+  assert.ok(!asleep.includes(colors.body))
 })

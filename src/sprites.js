@@ -45,7 +45,9 @@ export const STATE_LABEL = {
   waiting: 'waiting for you',
   blocked: 'blocked',
   done: 'done',
-  idle: 'idle'
+  idle: 'idle',
+  watching: 'keeping an eye',
+  asleep: 'asleep'
 }
 
 function hash(text) {
@@ -826,6 +828,103 @@ export function holidayLights(p, w, t = 0) {
     const bright = ((x >> 2) + t) % 3 !== 0
     p(x + 1, dip + 1, 1, 1, bright ? palette[idx] : '#4a4e5c')
   }
+}
+
+// ---- bots --------------------------------------------------------------------------------------
+// An Orca bot is drawn as its mascot: a round sea creature with dot eyes and a headset, a shape no
+// person in the office has. Its colours come from a short list by its name, never two the same.
+
+/** Body and belly colours for bots, after Orca's mascots: salmon, teal, mustard, lilac, slate, brown. */
+export const BOT_COLORS = [
+  { body: '#e0786c', belly: '#eb9a8f' },
+  { body: '#2b6e6b', belly: '#d8f1dc' },
+  { body: '#f0bf48', belly: '#22406a' },
+  { body: '#c98fb8', belly: '#e7c3dc' },
+  { body: '#3f5a7c', belly: '#f2e9d6' },
+  { body: '#8a5a42', belly: '#f2e2c4' }
+]
+
+/**
+ * A colour for every bot: the one its name picks, or the next free one when another bot has it
+ * already, handed out in name order so nobody's colour shuffles between polls. Past six bots
+ * the colours come round again.
+ */
+export function botColors(bots) {
+  const out = new Map()
+  const taken = new Set()
+  for (const bot of [...bots].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))) {
+    if (taken.size >= BOT_COLORS.length) taken.clear()
+    let i = hash(bot.name) % BOT_COLORS.length
+    while (taken.has(i)) i = (i + 1) % BOT_COLORS.length
+    taken.add(i)
+    out.set(bot.id, BOT_COLORS[i])
+  }
+  return out
+}
+
+/** A colour mixed toward the grey of a dimmed nameplate, for a bot asleep. */
+export function dimmed(hex, k = 0.45) {
+  const n = parseInt(hex.slice(1), 16)
+  const mix = (v, to) => Math.round(v * (1 - k) + to * k)
+  const h = (v) => v.toString(16).padStart(2, '0')
+  return `#${h(mix(n >> 16, 0x8a))}${h(mix((n >> 8) & 255, 0x86))}${h(mix(n & 255, 0x92))}`
+}
+
+const shadeOf = (hex, k) => {
+  const n = parseInt(hex.slice(1), 16)
+  const f = (v) => Math.max(0, Math.min(255, Math.round(v * k)))
+  return `#${[f(n >> 16), f((n >> 8) & 255), f(n & 255)].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+}
+
+// The Brick mascot, 10 x 9 and flat: B body, D its far edge one shade darker, L belly, E eyes,
+// M mouth, H headset, T the mic tip.
+const BRICK_BOT = ['..BBBBBB..', '.BBBBBBBB.', 'BBLLLLLLBD', 'HLLELLELLD', 'HLLELLELLD', 'BLLLMMLLLD', 'BTLLLLLLBD', 'BBBBBBBBDD', 'B.BB.BB.BD']
+
+/**
+ * A bot the Brick way, 10 x 9 from its top-left: flat, no outline. `state` is a BotState: working
+ * looks down at its screen, watching looks from side to side, done smiles, asleep shuts its eyes.
+ */
+export function brickBot(p, colors, state, t) {
+  const asleep = state === 'asleep'
+  const body = asleep ? dimmed(colors.body) : colors.body
+  const belly = asleep ? dimmed(colors.belly) : colors.belly
+  const dark = shadeOf(body, 0.78)
+  const dy = asleep ? 1 : 0
+  const look = state === 'watching' ? ((t >> 3) % 2 ? 1 : -1) : 0
+  BRICK_BOT.forEach((row, y) => {
+    for (let x = 0; x < row.length; x++) {
+      const ch = row[x]
+      let col = { B: body, D: dark, L: belly, H: C.frame, M: C.frame, T: state === 'working' && t % 4 < 2 ? C.green : C.amber, E: belly }[ch]
+      if (!col) continue
+      p(x, y + dy, 1, 1, col)
+    }
+  })
+  // the eyes, painted over the face
+  const eye = (x, y) => p(x, y + dy, 1, 1, C.frame)
+  if (asleep || state === 'done' || (t % 30 === 0 && state !== 'blocked')) {
+    eye(3, 4)
+    eye(6, 4)
+  } else {
+    const ey = state === 'working' ? 4 : 3
+    eye(3 + look, ey)
+    eye(3 + look, ey + 1)
+    eye(6 + look, ey)
+    eye(6 + look, ey + 1)
+  }
+  if (state === 'blocked') {
+    p(-1, 1, 1, 3, body)
+    p(10, 1, 1, 3, body)
+  }
+}
+
+/** A small wooden lectern, 12 x 8, that a bot stands behind at the head of its row. */
+export function lectern(p) {
+  p(0, 0, 12, 2, C.woodTop)
+  p(0, 2, 12, 3, C.wood)
+  p(0, 5, 12, 1, C.woodDark)
+  p(1, 6, 2, 2, C.woodDark)
+  p(9, 6, 2, 2, C.woodDark)
+  p(5, 2, 2, 2, '#f2b134')
 }
 
 export { SKIN }

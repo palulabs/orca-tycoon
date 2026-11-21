@@ -37,6 +37,8 @@ export type Staff = {
 export type Desk = {
   id: string
   name: string
+  /** The project it works in: its floor's repo, and the tag under its nameplate in a bot's room. */
+  repo: string
   branch: string | null
   parentId: string | null
   /** The `--environment` selector of the paired Orca server it runs on; null on this machine. */
@@ -47,13 +49,50 @@ export type Desk = {
   label: string
   /** Its agents; none when the worktree is asleep. */
   staff: Staff[]
+  /** The bot that runs this desk (its Bot.id); null when none, or on an Orca that does not say. */
+  bot: string | null
+  /** Set when an automation made this workspace: its name, or null when Orca only says one did. */
+  automation: { name: string | null } | null
 }
 
 export type Floor = { repo: string; desks: Desk[] }
 
+/**
+ * How a bot shows: an agent's state, 'watching' when its own chat is quiet but a desk it runs is
+ * busy (it keeps an eye on them), or 'asleep' when it has no chat session open.
+ */
+export type BotState = StaffState | 'watching' | 'asleep'
+
+/** An Orca bot: a named assistant people ask from Slack, Linear or GitHub, with desks of its own. */
+export type Bot = {
+  /** Its name, prefixed `${environment}|` on a paired server: what Desk.bot points at. */
+  id: string
+  /** As Orca names it: "Chief of Stack". */
+  name: string
+  /** Its home folder's worktree id; null for a bot known only from its desks. */
+  homeId: string | null
+  /** The `--environment` selector of the paired Orca server its home is on; null on this machine. */
+  environment: string | null
+  /** That server's name, for the detail box; null on this machine. */
+  host: string | null
+  /** Its own chat sessions; none while it sleeps. */
+  staff: Staff[]
+  /** Every desk it runs, sleeping ones too; these are not on the project floors. */
+  desks: Desk[]
+  state: BotState
+  /** What it says when you click it. */
+  line: string
+  /** First line of its last reply, for its speech bubble. */
+  said: string | null
+  task: string | null
+  since: number
+}
+
 export type OfficeSnapshot = {
   at: number
   floors: Floor[]
+  /** Every bot Orca names, sorted by name; empty on an Orca without bots. */
+  bots: Bot[]
   error: string | null
 }
 

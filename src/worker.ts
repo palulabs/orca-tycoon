@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { win32 } from 'node:path'
-import type { Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
+import type { Bot, Desk, Floor, OfficeSnapshot, Specialist, Staff, StaffState, SwitchOutcome } from './protocol'
 
 export function windowsCliPath(executable: string): string {
   return win32.join(win32.dirname(executable), 'resources', 'bin', 'orca.exe')
@@ -356,6 +356,10 @@ const worktreesOf = (raw: unknown): Row[] => {
  * The office from this machine's `worktree ps` answer and each paired server's. A server's desks
  * join the team of their project like any other, their ids prefixed with the server so a desk
  * there never collides with one here, and they carry the selector "Open in Orca" goes through.
+ *
+ * Bots take their own place. A bot's home folder (`botHome`) is the bot itself, never a desk, and
+ * every workspace that names a bot (`bot`) leaves its project for that bot's desks. An Orca that
+ * sends neither draws the office it always did.
  */
 export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = []): OfficeSnapshot {
   type Placed = { w: Row; environment: string | null }
@@ -366,50 +370,120 @@ export function toSnapshot(raw: unknown, at: number, servers: ServerAnswer[] = [
   const idOf = (id: string | null, environment: string | null) => (id && environment ? `${environment}|${id}` : id)
   const repoOf = (w: Row) => str(w.repo) ?? 'Other'
   const busy = (w: Row) => Array.isArray(w.agents) && w.agents.length > 0
+  const hostOf = ({ w, environment }: Placed) => (environment ? str((w.environment as Row | null)?.name) ?? environment : null)
+  const open = all.filter(({ w }) => w.isArchived !== true)
+  const homes = open.filter(({ w }) => w.botHome === true && str(w.bot))
+  // a bot's home is never a desk, even one that does not say which bot it is
+  const rest = open.filter(({ w }) => w.botHome !== true)
+  const botDesks = rest.filter(({ w }) => str(w.bot))
+  const projectDesks = rest.filter(({ w }) => !str(w.bot))
   // A project with a live agent brings all its worktrees that are not archived, the sleeping ones
   // too, so the loft can give each its desk; a project nobody works in stays off the floor.
-  const open = all.filter(({ w }) => w.isArchived !== true)
-  const working = new Set(open.filter(({ w }) => busy(w)).map(({ w }) => repoOf(w)))
-  const live = open.filter(({ w }) => working.has(repoOf(w)))
+  const working = new Set(projectDesks.filter(({ w }) => busy(w)).map(({ w }) => repoOf(w)))
+  const live = projectDesks.filter(({ w }) => working.has(repoOf(w)))
   const nameOf = (w: Row) => str(w.displayName) ?? str(w.branch)?.replace(/^refs\/heads\//, '') ?? 'workspace'
   // names several desks in one project share tell those desks apart from nothing
   // an agent's nameplate weighs its name against the other busy desks, as it always did; a desk's
   // own nameplate, shown while it sleeps, against every desk on the floor
   const seen = new Map<string, number>()
   const seenAll = new Map<string, number>()
-  for (const { w } of live) {
-    const key = `${repoOf(w)}\n${nameOf(w).toLowerCase()}`
+  // a bot's desks sit apart from their project's team, so they are told apart among the bot's own
+  const nameKey = (w: Row) => `${str(w.bot) ? `\u0000bot|${str(w.bot)}|` : ''}${repoOf(w)}\n${nameOf(w).toLowerCase()}`
+  for (const { w } of [...live, ...botDesks]) {
+    const key = nameKey(w)
     seenAll.set(key, (seenAll.get(key) ?? 0) + 1)
     if (busy(w)) seen.set(key, (seen.get(key) ?? 0) + 1)
   }
-  const floors = new Map<string, Desk[]>()
-  for (const { w, environment } of live) {
+  const deskOf = (placed: Placed, bot: string | null): Desk => {
+    const { w, environment } = placed
     const agents = busy(w) ? (w.agents as Row[]) : []
     const repo = repoOf(w)
-    const branch = str(w.branch)?.replace(/^refs\/heads\//, '') ?? null
     const name = nameOf(w)
     const defaultBranch = str(w.defaultBranch)?.replace(/^(?:refs\/heads\/|origin\/)/, '') ?? null
     const plain = w.isMainWorktree === true || isGenericName(name, defaultBranch)
-    const generic = plain || (seen.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
-    const deskGeneric = plain || (seenAll.get(`${repo}\n${name.toLowerCase()}`) ?? 0) > 1
-    const desk: Desk = {
+    const generic = plain || (seen.get(nameKey(w)) ?? 0) > 1
+    const deskGeneric = plain || (seenAll.get(nameKey(w)) ?? 0) > 1
+    return {
       id: idOf(String(w.worktreeId ?? ''), environment) ?? '',
       name,
-      branch,
+      repo,
+      branch: str(w.branch)?.replace(/^refs\/heads\//, '') ?? null,
       parentId: idOf(str(w.parentWorktreeId), environment),
       environment,
-      host: environment ? str((w.environment as Row | null)?.name) ?? environment : null,
+      host: hostOf(placed),
       label: labelOf(null, name, deskGeneric),
-      staff: agents.map((row) => toStaff(row, name, generic))
+      staff: agents.map((row) => toStaff(row, name, generic)),
+      bot,
+      automation: w.automationCreated === true ? { name: str(w.automationName) } : null
     }
-    const list = floors.get(repo) ?? []
-    list.push(desk)
-    floors.set(repo, list)
+  }
+  const floors = new Map<string, Desk[]>()
+  for (const placed of live) {
+    const list = floors.get(repoOf(placed.w)) ?? []
+    list.push(deskOf(placed, null))
+    floors.set(repoOf(placed.w), list)
   }
   const out: Floor[] = [...floors.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([repo, desks]) => ({ repo, desks }))
-  return { at, floors: out, error: null }
+
+  // the bots: every home, then whoever a desk names without a home in the rows
+  const bots = new Map<string, Bot>()
+  for (const placed of homes) {
+    const { w, environment } = placed
+    const name = str(w.bot)!
+    const id = idOf(name, environment)!
+    if (bots.has(id)) continue
+    const agents = busy(w) ? (w.agents as Row[]) : []
+    bots.set(id, {
+      ...botBase(id, name, environment, hostOf(placed)),
+      homeId: idOf(str(w.worktreeId), environment),
+      staff: agents.map((row) => toStaff(row, name, false))
+    })
+  }
+  for (const placed of botDesks) {
+    const name = str(placed.w.bot)!
+    // the bot of that name on the same Orca, else the only one of that name anywhere, else one
+    // known only from its desks
+    let bot = bots.get(idOf(name, placed.environment)!)
+    if (!bot) {
+      const named = [...bots.values()].filter((b) => b.name === name && b.homeId !== null)
+      bot = named.length === 1 ? named[0] : undefined
+    }
+    if (!bot) {
+      const id = idOf(name, placed.environment)!
+      bot = { ...botBase(id, name, placed.environment, hostOf(placed)), homeId: null, staff: [] }
+      bots.set(id, bot)
+    }
+    bot.desks.push(deskOf(placed, bot.id))
+  }
+  const botList = [...bots.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  for (const bot of botList) Object.assign(bot, botLook(bot))
+  return { at, floors: out, bots: botList, error: null }
+}
+
+function botBase(id: string, name: string, environment: string | null, host: string | null): Bot {
+  return { id, name, homeId: null, environment, host, staff: [], desks: [], state: 'asleep', line: '', said: null, task: null, since: 0 }
+}
+
+// most urgent first: one chat that needs you speaks for the bot
+const URGENCY: StaffState[] = ['blocked', 'waiting', 'working', 'monitoring', 'done', 'idle']
+const BUSY_STATES = new Set<StaffState>(['working', 'monitoring', 'waiting', 'blocked'])
+
+/**
+ * How a bot shows and what it says: its most urgent chat session; keeping an eye on its desks when
+ * that chat is quiet and one of them is busy; asleep with no chat at all.
+ */
+export function botLook(bot: Pick<Bot, 'staff' | 'desks'>): Pick<Bot, 'state' | 'line' | 'said' | 'task' | 'since'> {
+  const lead = [...bot.staff].sort((a, b) => URGENCY.indexOf(a.state) - URGENCY.indexOf(b.state))[0]
+  if (!lead) return { state: 'asleep', line: "I'm resting until someone asks for me", said: null, task: null, since: 0 }
+  const busyDesks = bot.desks.filter((d) => d.staff.some((s) => BUSY_STATES.has(s.state)))
+  const quiet = lead.state === 'done' || lead.state === 'idle'
+  if (quiet && busyDesks.length) {
+    const what = busyDesks.length === 1 ? busyDesks[0].staff.find((s) => BUSY_STATES.has(s.state))?.label || busyDesks[0].label : `${busyDesks.length} desks`
+    return { state: 'watching', line: `I'm keeping an eye on ${what}`, said: lead.said, task: lead.task, since: lead.since }
+  }
+  return { state: lead.state, line: lead.line, said: lead.said, task: lead.task, since: lead.since }
 }
 
 // ---- Open in Orca -------------------------------------------------------------------------------
@@ -484,7 +558,7 @@ export async function switchTo(
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
-  let last: OfficeSnapshot = { at: 0, floors: [], error: null }
+  let last: OfficeSnapshot = { at: 0, floors: [], bots: [], error: null }
   let environments: string[] = []
   orca.panels.handle('office.snapshot', async () => {
     try {

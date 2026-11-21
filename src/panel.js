@@ -47,11 +47,16 @@ import {
   dogBed,
   waterCooler,
   whiteboard,
-  workstation
+  workstation,
+  botColors,
+  brickBot,
+  lectern
 } from './sprites.js'
-import { LOFT_MIN_W, loftGeometry, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing } from './loft.js'
+import { loftGeometry, loftMinW, drawLoft, layoutLoft, lounging, outlinedAt, sitting, standing, standingBot } from './loft.js'
 import {
   breakWalk,
+  coordinatorSeated,
+  coordinatorWalk,
   deskStayLabel,
   deskStayOf,
   nextDeskStay,
@@ -118,6 +123,13 @@ const LOUNGE_STATES = new Set(['done', 'idle'])
 const FLOOR = { plank: '#d9c8a4', seam: '#c9b78f', joint: '#bba97f' }
 const BRICK = { wall: '#b5653f', top: '#cf7a50', dark: '#8f4b2d', window: '#a8d2e6' }
 const CARPETS = ['#a98260', '#7f9b74', '#8d7f9c', '#7d8ba6', '#a8936f', '#9c7575', '#6f9a99']
+// Every bot's room has the navy of the loft's curtains, outside the team carpets, so it never reads as a project.
+const BOT_CARPET = '#5b7597'
+const BRICK_HEAD = 14 // the bot and its lectern at the head of the first row
+const COORD_ROOM_W = 96 // the coordinator's room beside the commons
+const COORD_ROOM_H = 56 // or under it, on a floor too narrow for both side by side
+const COORD_DOOR_X = 46 // its door in the top edge, between its sign and its whiteboard
+const COORD_DOOR_W = 16
 const STATE_NOTE = {
   working: C.green,
   monitoring: C.blue,
@@ -170,6 +182,16 @@ try {
   // no storage in this frame: the default for this session
 }
 
+// The coordinator: one bot, picked in the header, that gets a room of its own and walks the floor.
+// Kept by its id, so it is the panel's choice and never a name built into the code.
+const COORD_KEY = 'office-tycoon.coordinator'
+let coordinatorPick = null
+try {
+  coordinatorPick = localStorage.getItem(COORD_KEY) || null
+} catch {
+  // no storage in this frame: no coordinator this session until one is picked
+}
+
 function applyDark() {
   document.documentElement.dataset.dark = String(dark)
   document.body?.setAttribute('data-dark', String(dark))
@@ -210,6 +232,25 @@ festiveSwitch?.querySelector('button')?.addEventListener('click', () => {
 
 let snapshot = null
 let layout = { artW: 0, artH: 0, scale: 3, building: null, rooms: [], seats: [], common: null }
+// The bots on the floor and their colours, taken from each snapshot.
+let shownBots = []
+let botPalette = new Map()
+const BOT_KEY = 'bot:'
+const botKey = (bot) => `${BOT_KEY}${bot.id}`
+/** The bot a key belongs to, when it is a bot's. */
+const botOf = (key) => (key?.startsWith(BOT_KEY) ? shownBots.find((b) => b.id === key.slice(BOT_KEY.length)) ?? null : null)
+const colorsOf = (bot) => botPalette.get(bot.id) ?? { body: '#e0786c', belly: '#eb9a8f' }
+/** The coordinator's id when that bot is in the snapshot, else null. */
+const coordinatorId = () => (coordinatorPick && (snapshot?.bots ?? []).some((b) => b.id === coordinatorPick) ? coordinatorPick : null)
+
+/**
+ * The bots that show: one whose own chat is open or one of whose desks is busy, and the
+ * coordinator always, asleep in its room when nothing is going on.
+ */
+function botsOnFloor(snap) {
+  const coord = coordinatorId()
+  return (snap?.bots ?? []).filter((b) => b.staff.length > 0 || b.desks.some((d) => d.staff.length > 0) || b.id === coord)
+}
 let selected = null // seat key, or a specialist's visitor key (`seat key|specialist id`)
 let tick = 0
 const lastState = new Map() // seat key -> state, to pop a bubble when it changes
@@ -329,13 +370,24 @@ function computeLayout(cssW, scale, corridor = GAP) {
   // instead, so it spreads across rather than down. Biggest teams go first.
   const fullInner = floorW - GLASS * 2 - PAD * 2
   const seatCount = (floor) => floor.desks.reduce((n, d) => n + d.staff.length, 0)
-  const plans = (snapshot?.floors ?? [])
-    .map((floor) => {
-      let plan = { ...planRoom(floor, innerW), w: roomW, inner: innerW, wide: false }
-      if (cols > 1 && plan.lines.length >= 3) plan = { ...planRoom(floor, fullInner), w: floorW, inner: fullInner, wide: true }
-      return { floor, ...plan, h: TOP + plan.lines.length * LINE_H + PAD }
-    })
-    .sort((a, b) => seatCount(b.floor) - seatCount(a.floor) || a.floor.repo.localeCompare(b.floor.repo))
+  const coordBot = shownBots.find((b) => b.id === coordinatorId()) ?? null
+  const planOf = (floor, bot = null, head = 0) => {
+    let plan = { ...planRoom(floor, innerW - head), w: roomW, inner: innerW, wide: false }
+    if (cols > 1 && plan.lines.length >= 3) plan = { ...planRoom(floor, fullInner - head), w: floorW, inner: fullInner, wide: true }
+    // a bot's room keeps its row while none of its desks is awake, for the bot at its head, and
+    // has a little more floor for the project tags under its nameplates
+    return { floor, ...plan, h: TOP + Math.max(bot ? 1 : 0, plan.lines.length) * LINE_H + PAD + (bot ? 4 : 0), bot, head }
+  }
+  // the bots' rooms first, one each; the coordinator's only when it runs desks, as in the loft
+  const botPlans = shownBots
+    .filter((bot) => bot !== coordBot || bot.desks.length > 0)
+    .map((bot) => planOf({ repo: bot.name, desks: bot.desks }, bot, bot === coordBot ? 0 : BRICK_HEAD))
+  const plans = [
+    ...botPlans,
+    ...(snapshot?.floors ?? [])
+      .map((floor) => planOf(floor))
+      .sort((a, b) => seatCount(b.floor) - seatCount(a.floor) || a.floor.repo.localeCompare(b.floor.repo))
+  ]
   // Open areas need not line up: each one goes into the column that is shortest so far, and a
   // full-width team starts below everything placed before it.
   const pack = (list, top) => {
@@ -368,24 +420,28 @@ function computeLayout(cssW, scale, corridor = GAP) {
 
   // The commons band across the middle: lounge, coffee corner (water dispenser, coffee machine)
   // and kitchen. Wide floors put them side by side; narrow ones stack the lounge above.
-  const wide = floorW >= 150
+  // The coordinator's room stands beside the commons at its right end, when the floor is wide
+  // enough for both; the commons lays itself out in what is left.
+  const coordBeside = Boolean(coordBot) && floorW - COORD_ROOM_W - GAP >= MIN_ROOM_W
+  const cw = coordBeside ? floorW - COORD_ROOM_W - GAP : floorW
+  const wide = cw >= 150
   const bandY = plans.length ? top.bottom : OUTER + MARGIN
   const rows = wide ? 2 : 3
   const bandH = COMMON_H * rows
   const gamesY = bandY + COMMON_H * (rows - 1)
   const entry = 10 // a clear strip by the door
-  const common = { x: OUTER + MARGIN, y: bandY, w: floorW, h: bandH }
-  const loungeW = wide ? Math.floor((floorW - GAP) / 2) - entry : floorW - entry
+  const common = { x: OUTER + MARGIN, y: bandY, w: cw, h: bandH }
+  const loungeW = wide ? Math.floor((cw - GAP) / 2) - entry : cw - entry
   const cornerX = wide ? common.x + entry + loungeW + GAP : common.x + entry
   const cornerY = wide ? bandY : bandY + COMMON_H
   common.lounge = { x: common.x + entry, y: bandY + 4, w: loungeW }
   common.cooler = { x: cornerX + 2, y: cornerY + 2 }
   common.coffee = { x: cornerX + 12, y: cornerY + 4 }
-  common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.max(30, common.x + floorW - cornerX - 24) }
+  common.kitchen = { x: cornerX + 24, y: cornerY + 6, w: Math.max(30, common.x + cw - cornerX - 24) }
   common.laneTop = bandY - 4
   common.laneBottom = bandY + bandH - 8
   common.spots = []
-  for (let sx = cornerX; sx + 8 <= common.x + floorW; sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
+  for (let sx = cornerX; sx + 8 <= common.x + cw; sx += 9) common.spots.push({ x: sx, y: cornerY + 17, kind: 'coffee' })
   // the games row: a foosball table, and calling booths along the right
   const fx = common.x + entry + 12
   common.foosball = { x: fx, y: gamesY + 7 }
@@ -398,7 +454,7 @@ function computeLayout(cssW, scale, corridor = GAP) {
   common.booths = []
   const boothCount = wide ? 3 : 2
   for (let i = 0; i < boothCount; i++) {
-    const bx = common.x + floorW - (i + 1) * 16
+    const bx = common.x + cw - (i + 1) * 16
     common.booths.push({ x: bx + 2, y: gamesY + 9, kind: 'booth', left: true, bx, by: gamesY + 5 })
   }
   common.sofa = []
@@ -410,7 +466,7 @@ function computeLayout(cssW, scale, corridor = GAP) {
   // a corner of the lounge rug. His bowls go beside the bed when there is room for both, else in
   // the lounge's front corner by the door.
   const gapStart = fx + 34
-  const gapEnd = common.x + floorW - boothCount * 16
+  const gapEnd = common.x + cw - boothCount * 16
   const gap = gapEnd - gapStart
   if (gap >= 48) {
     // bowls first, with room on their left to stand clear of the foosball table, then the bed
@@ -424,16 +480,27 @@ function computeLayout(cssW, scale, corridor = GAP) {
     common.bowls = { x: common.lounge.x + 3, y: common.lounge.y + 19 }
   }
 
-  const bottom = pack(plans.slice(split), bandY + bandH + corridor)
+  // on a floor too narrow for both side by side, the coordinator's room stands under the commons
+  const coordBox = !coordBot
+    ? null
+    : coordBeside
+      ? { x: common.x + cw + GAP, y: bandY, w: COORD_ROOM_W, h: bandH }
+      : { x: OUTER + MARGIN, y: bandY + bandH + corridor, w: floorW, h: COORD_ROOM_H }
+  const below = coordBox && !coordBeside ? COORD_ROOM_H + corridor : 0
+  const bottom = pack(plans.slice(split), bandY + bandH + corridor + below)
   const rooms = []
   const seats = []
   for (const { plan, x, y: ry } of [...top.placed, ...bottom.placed]) {
     const { floor, lines, tableW, h } = plan
-    const room = { x, y: ry, w: plan.w, h, name: floor.repo, carpet: pick(CARPETS, floor.repo), notes: [] }
+    const room = { x, y: ry, w: plan.w, h, name: floor.repo, carpet: plan.bot ? BOT_CARPET : pick(CARPETS, floor.repo), notes: [] }
+    if (plan.bot) room.bot = plan.bot
+    // a bot with no desk awake still stands at the head of its row
+    if (plan.head && !lines.length) room.head = { bot: plan.bot, x: room.x + GLASS + PAD + Math.floor((plan.inner - plan.head) / 2), y: room.y + TOP }
     lines.forEach((line, li) => {
       const lineW = line.reduce((n, t) => n + tableW(t), 0) + TABLE_GAP * (line.length - 1)
-      let tx = room.x + GLASS + PAD + Math.floor((plan.inner - lineW) / 2)
+      let tx = room.x + GLASS + PAD + plan.head + Math.floor((plan.inner - plan.head - lineW) / 2)
       const ty = room.y + TOP + li * LINE_H
+      if (li === 0 && plan.head) room.head = { bot: plan.bot, x: tx - plan.head, y: ty }
       for (const table of line) {
         for (const { desk: d, staff } of table) {
           const n = stoolCount(staff)
@@ -448,9 +515,28 @@ function computeLayout(cssW, scale, corridor = GAP) {
     })
     rooms.push(room)
   }
-  const y = Math.max(bottom.bottom, bandY + bandH + corridor) - corridor + MARGIN
+  let coordinator = null
+  if (coordBox) {
+    const room = { ...coordBox, name: coordBot.name, carpet: BOT_CARPET, notes: [...botPalette.values()].map((c) => c.body), bot: coordBot, coord: true }
+    rooms.push(room)
+    // its desk by the sign, its door in the top edge onto the hallway
+    const seat = { x: room.x + 8, y: room.y + 12 }
+    coordinator = {
+      bot: coordBot,
+      room,
+      seat,
+      home: { x: seat.x + 6, y: seat.y + SEAT_H + LABEL_H - 4 },
+      entrance: { x: room.x + COORD_DOOR_X + 4, y: room.y + 2 },
+      door: { x: room.x + COORD_DOOR_X, w: COORD_DOOR_W },
+      stops: rooms
+        .filter((r) => r.head)
+        .map((r) => ({ at: { x: r.head.x + 2, y: r.head.y + SEAT_H + LABEL_H - 4 }, say: `Checking on ${r.head.bot.name}` }))
+    }
+  }
+  const y = Math.max(bottom.bottom, bandY + bandH + corridor + below) - corridor + MARGIN
   const building = { w: artW, h: y + OUTER, doorY }
-  return { artW, artH: building.h, scale, building, rooms, seats, common }
+  const teamCount = plans.filter((plan) => !plan.bot).length
+  return { artW, artH: building.h, scale, building, rooms, seats, common, coordinator, teamCount }
 }
 
 /**
@@ -480,9 +566,11 @@ function fitLayout() {
     if (fit) fit.artH = fit.building.h = rows
     return fit
   }
+  // the coordinator's room stands beside the commons, which needs the floor for both
+  const minW = coordinatorId() && shownBots.some((b) => b.id === coordinatorId()) ? MIN_ART_W + COORD_ROOM_W + GAP : MIN_ART_W
   for (let n = MAX_SCALE * perPx; n / perPx > minScale; n--) {
     const scale = n / perPx
-    if (Math.floor(cssW / scale) < MIN_ART_W) continue
+    if (Math.floor(cssW / scale) < minW) continue
     const filled = fill(scale)
     if (filled) return filled
   }
@@ -492,19 +580,22 @@ function fitLayout() {
 /** The loft at the biggest scale at which it fits, its floor stretched to the panel's bottom. */
 function fitLoft(cssW, cssH, perPx) {
   const helpers = { families, familySeats, activeSpecialists }
+  const bots = { list: shownBots, coordinator: coordinatorId() }
+  const coord = shownBots.some((b) => b.id === bots.coordinator)
+  const minW = loftMinW({ heads: shownBots.some((b) => b.id !== bots.coordinator), coordinator: coord })
   const minScale = 2
   for (let n = MAX_SCALE * perPx; n / perPx >= minScale; n--) {
     const scale = n / perPx
-    if (Math.floor(cssW / scale) < LOFT_MIN_W && scale > minScale) continue
+    if (Math.floor(cssW / scale) < minW && scale > minScale) continue
     const rows = Math.floor(cssH / scale)
-    const fit = layoutLoft(snapshot, cssW, scale, helpers, rows)
+    const fit = layoutLoft(snapshot, cssW, scale, helpers, rows, bots)
     if (fit.artH <= rows) {
       fit.artH = fit.building.h = rows
       return fit
     }
   }
   // too tall for the panel at any scale: it scrolls, so leave room for the scrollbar across
-  return layoutLoft(snapshot, cssW - SCROLLBAR, minScale, helpers, Math.floor(cssH / minScale))
+  return layoutLoft(snapshot, cssW - SCROLLBAR, minScale, helpers, Math.floor(cssH / minScale), bots)
 }
 
 /**
@@ -620,22 +711,33 @@ function drawRoom(p, room) {
     p(sx, sy, 1, 1, 'rgba(255,255,255,0.08)')
   }
   // name plaque and a whiteboard of sticky notes; the plant and bookshelf stand on the floor and
-  // are drawn with the scenery, in depth order
-  p(x + 3, y + 3, Math.min(w - 40, 56), 7, '#2a2633')
-  const boardW = Math.min(26, w - 70)
+  // are drawn with the scenery, in depth order. In the coordinator's room the whiteboard is the
+  // floor map: a note in each bot's colour.
+  p(x + 3, y + 3, plaqueW(room), 7, '#2a2633')
+  const boardW = boardWOf(room)
   if (boardW > 8) whiteboard(painter(ctx, x + w - boardW - 4, y + 3), boardW, room.notes)
+  // the coordinator's door: a wooden strip in its top edge, onto the hallway
+  if (room.coord && layout.coordinator) {
+    const { door } = layout.coordinator
+    p(door.x, y - 1, door.w, 3, '#6b4226')
+    p(door.x, y - 1, door.w, 1, '#8a5a3a')
+  }
   if (festive()) {
     holidayLights(painter(ctx, x + 2, y), w - 4, tick)
   }
 }
 
-/** Where an area's plant (7 x 9) and bookshelf (12 x 9, roomy areas only) stand. */
+/** Where an area's plant (7 x 9) and bookshelf (12 x 9, roomy areas and the coordinator's) stand. */
 function roomDecor(room) {
   const { x, y, w, h } = room
   const decor = [{ kind: 'plant', x: x + 3, y: y + h - 11 }]
-  if (w > 90 && h > 50) decor.push({ kind: 'bookshelf', x: x + w - 15, y: y + h - 12 })
+  if ((w > 90 && h > 50) || room.coord) decor.push({ kind: 'bookshelf', x: x + w - 15, y: y + h - 12 })
   return decor
 }
+
+/** An area's name plaque, and its whiteboard (none in a narrow area). */
+const plaqueW = (room) => (room.coord ? COORD_DOOR_X - 6 : Math.min(room.w - 40, 56))
+const boardWOf = (room) => (room.coord ? 26 : Math.min(26, room.w - 70))
 
 /** Everything standing on the floor, each with the box it covers and the row its base is on. */
 function commonItems(c) {
@@ -1030,10 +1132,27 @@ function floorObstacles(who) {
     boxes.push(d.kind === 'plant' ? [d.x + 1, d.y + 5, 5, 4] : [d.x, d.y + 4, 12, 5])
   }
   // each area's name plaque and whiteboard: walk in front of them, not over them
-  for (const { x, y, w } of layout.rooms) {
-    const boardW = Math.min(26, w - 70)
-    boxes.push([x + 3, y + 3, Math.min(w - 40, 56), 7])
+  for (const room of layout.rooms) {
+    const { x, y, w } = room
+    const boardW = boardWOf(room)
+    boxes.push([x + 3, y + 3, plaqueW(room), 7])
     if (boardW > 8) boxes.push([x + w - boardW - 4, y + 3, boardW, 7])
+    // a bot at the head of its row, behind its lectern
+    if (room.head) boxes.push([room.head.x, room.head.y + 5, 12, SEAT_H + LABEL_H - 5])
+  }
+  // the coordinator's desk, and its room's edges: Brick has no walls, but its only way in or out
+  // is the door in its top edge
+  const chiefDesk = layout.coordinator
+  if (chiefDesk) {
+    boxes.push([chiefDesk.seat.x - 2, chiefDesk.seat.y + top, DESK_W + 2, SEAT_H + LABEL_H - top])
+    const { room, door } = chiefDesk
+    boxes.push(
+      [room.x, room.y - 1, door.x - room.x, 2],
+      [door.x + door.w, room.y - 1, room.x + room.w - door.x - door.w, 2],
+      [room.x - 1, room.y, 2, room.h],
+      [room.x + room.w - 1, room.y, 2, room.h],
+      [room.x, room.y + room.h - 1, room.w, 2]
+    )
   }
   if (!c) return boxes
   const { lounge: l, kitchen: k, foosball: f, cooler, coffee } = c
@@ -1295,9 +1414,97 @@ function drawPalu(base = painter(ctx)) {
   else paluLie(at, tick, true, palu.restLeft)
 }
 
+// ---- the coordinator's round -------------------------------------------------------------------
+// While it works or keeps an eye on its desks, the coordinator walks a round: out through the way
+// into its room, to the head of every other bot's island and to each desk that needs you, a
+// moment at each with a word about what it is checking, then back to its desk. When it waits for
+// you it goes and waits at its way in, where you find it; otherwise it sits at its desk.
+
+const CHIEF_DWELL = 40 // frames at each stop on the round, long enough to read what it says
+const CHIEF_REST = 64 // frames at its desk between rounds
+const CHIEF_STOPS = 6 // stops on one round at most
+const CHIEF_SPEED = 3 // art pixels a frame: a bot scoots, twice a walk
+let chief = null
+
+/** The stops of one round, from the layout on screen: desks that need you first, then the other bots. */
+function chiefRound(plan) {
+  const needYou = layout.seats
+    .filter((s) => (s.staff.state === 'waiting' || s.staff.state === 'blocked') && !walkers.has(s.key))
+    .map((s) => ({ at: homeOf(s), say: `How is ${nameplate(s)} doing?` }))
+  return [...needYou, ...plan.stops].slice(0, CHIEF_STOPS)
+}
+
+function stepChief() {
+  const plan = layout.coordinator
+  if (!plan) {
+    chief = null
+    return
+  }
+  chief = coordinatorWalk(chief, plan, {
+    round: () => chiefRound(plan),
+    route: (from, to) => walkPath('chief', from, to),
+    speed: CHIEF_SPEED,
+    rest: CHIEF_REST,
+    dwell: CHIEF_DWELL
+  })
+}
+
+/** Whether the coordinator sits at its desk: at home with nowhere to go. */
+const chiefSeated = () => coordinatorSeated(chief, layout.coordinator)
+
 /** Whether the seat's agent just finished and sits up at its desk, ready for the next task. */
 function awaitingTask(seat) {
   return seat.staff.state === 'done' && staysAtDesk(doneAt.get(seat.key), Date.now(), deskStay)
+}
+
+/** The ? over a Brick bot that waits for you, the ! over a stuck one, the z over one asleep. */
+function brickMarks(p, state) {
+  if (state === 'waiting' && (tick >> 2) % 2) glyph(p, '?', 4, -6, C.amber)
+  if (state === 'blocked') glyph(p, '!', 4, -6, C.red)
+  if (state === 'asleep') {
+    const z = tick % 16
+    if (z < 12) glyph(p, 'z', 10 + (z >> 2), -2 - (z >> 2), C.white)
+  }
+}
+
+/** A bot at the head of its row in Brick: flat, behind a small wooden lectern. */
+function drawBrickHead(head) {
+  const { bot } = head
+  const bob = bot.state === 'working' ? tick % 2 : 0
+  const at = painter(ctx, head.x + 1, head.y + 5 - bob)
+  brickBot(at, colorsOf(bot), bot.state, tick)
+  brickMarks(at, bot.state)
+  lectern(painter(ctx, head.x, head.y + 11))
+}
+
+/** The coordinator's desk in Brick: its chair, itself when it sits there, the monitor and the desk. */
+function drawBrickChiefDesk(k) {
+  const { bot, seat } = k
+  const p = painter(ctx, seat.x, seat.y)
+  const state = bot.state
+  p(4, 4, 12, 9, C.chair)
+  p(4, 4, 12, 1, C.chairDark)
+  if (chiefSeated()) {
+    const at = painter(ctx, seat.x + 5, seat.y - 1 + (state === 'working' ? tick % 2 : 0))
+    brickBot(at, colorsOf(bot), state, tick)
+    brickMarks(at, state)
+  }
+  desk(painter(ctx, seat.x - 2, seat.y), DESK_W)
+  p(5, 9, 10, 7, C.frame)
+  p(6, 10, 8, 5, C.screen)
+  if (state === 'working') {
+    for (let line = 0; line < 3; line++) p(7, 10 + Math.floor(line * 1.5), Math.min(2 + ((tick + line * 5) % 6), 6), 1, [C.green, C.blue, C.amber][(line + (tick >> 2)) % 3])
+  } else if (state === 'watching' || state === 'monitoring') {
+    p(7, 12, 6, 1, C.chairDark)
+    p(7, 12, tick % 7, 1, C.green)
+  } else if (state === 'waiting') {
+    p(6, 10, 8, 5, '#3a2a10')
+    if ((tick >> 2) % 2) glyph(p, '?', 9, 10, C.amber)
+  } else if (state === 'blocked') {
+    p(6, 10, 8, 5, (tick >> 1) % 2 ? C.red : '#8a2232')
+    glyph(p, '!', 9, 10, C.white)
+  }
+  p(6, 16, 8, 1, '#c8c6d4')
 }
 
 function drawSeat(seat) {
@@ -1331,6 +1538,11 @@ function drawText(text, cssX, cssY, maxW, color, { weight = 600, align = 'left',
 
 /** Where a bubble points for this key: the person, wherever they are, or the desk. */
 function bubbleAnchor(key) {
+  const bot = botOf(key)
+  if (bot) {
+    const box = botBox(bot)
+    return box && { x: box[0] + box[2] / 2, y: box[1] }
+  }
   const v = visitors.get(key)
   if (v) return { x: v.x + 4, y: v.mode === 'seated' ? v.y + 2 : v.y - 1 }
   const seat = layout.seats.find((u) => u.key === key)
@@ -1445,6 +1657,14 @@ function loftPeople() {
       paint: (p) => standing(p, x, y, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role))
     })
   }
+  // the coordinator, out on its round or waiting at its way in
+  if (chief && layout.coordinator && !chiefSeated()) {
+    const { bot } = layout.coordinator
+    const x = Math.round(chief.x)
+    const y = Math.round(chief.y)
+    const moving = chief.path.length > 0
+    people.push({ key: botKey(bot), kind: null, base: y + 15, moving, paint: (p) => standingBot(p, x, y, colorsOf(bot), bot.state, tick, moving) })
+  }
   return people
 }
 
@@ -1474,6 +1694,7 @@ function drawLoftScene() {
       drawText(...args)
       artTransform()
     },
+    bots: { colors: botPalette, chiefSeated: chiefSeated() },
     view
   })
 }
@@ -1485,6 +1706,7 @@ function draw() {
   if (!snapshot || !layout.building) return
   if (loft()) {
     drawLoftScene()
+    drawChiefName()
     drawSelection()
     return
   }
@@ -1509,6 +1731,9 @@ function draw() {
     const last = seat.stools[seat.stools.length - 1]
     glyph(p, '+', last.x + 7, last.y - 10, C.white)
   }
+  // the bots: each at the head of its row, the coordinator at its desk
+  for (const room of layout.rooms) if (room.head) drawBrickHead(room.head)
+  if (layout.coordinator) drawBrickChiefDesk(layout.coordinator)
 
   // people up and about, Palú and specialists on their way, nearest the bottom drawn last, so
   // whoever stands in front covers whoever is behind. Callers in a booth go first, under its glass.
@@ -1535,6 +1760,19 @@ function draw() {
     const at = painter(ctx, Math.round(v.x), Math.round(v.y))
     scene.push({ base: Math.round(v.y) + 15, paint: () => walker(at, v.spec, tick, onTheMove(v), v.left, roleColor(v.spec.role)) })
   }
+  if (chief && layout.coordinator && !chiefSeated()) {
+    const x = Math.round(chief.x)
+    const y = Math.round(chief.y)
+    const { bot } = layout.coordinator
+    const bob = chief.path.length ? tick % 2 : 0
+    scene.push({
+      base: y + 15,
+      paint: () => {
+        brickBot(painter(ctx, x - 1, y + 6 - bob), colorsOf(bot), bot.state, tick)
+        brickMarks(painter(ctx, x - 1, y + 6 - bob), bot.state)
+      }
+    })
+  }
   const dog = behind.has('palu') ? null : paluBox()
   // on a tie Palú goes first: he is low to the ground, so the person's legs cover him
   if (dog) scene.push({ base: dog.base - 0.5, paint: drawPalu })
@@ -1545,23 +1783,49 @@ function draw() {
 
   const s = layout.scale
   for (const room of layout.rooms) {
-    drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (Math.min(room.w - 40, 56) - 4) * s, C.white, { weight: 700 })
+    drawText(room.name, (room.x + 5) * s, (room.y + 6.5) * s, (plaqueW(room) - 4) * s, C.white, { weight: 700 })
   }
   for (const seat of layout.seats) {
     const color = seat === seatOf(selected) ? '#2a1f6b' : '#2a2633'
     // as wide as the desk itself (DESK_W), less a margin, so neighbouring nameplates never touch
     drawText(nameplate(seat), (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 2.5) * s, DESK_W * s - 2, color, { align: 'center' })
+    // in a bot's room, the project each desk works in, small, under its nameplate
+    if (seat.room.bot) drawText(seat.desk.repo ?? '', (seat.x + SEAT_W / 2) * s, (seat.y + SEAT_H + 7.5) * s, DESK_W * s - 2, '#23212b', { align: 'center', size: 9, chip: '#f1efe8' })
   }
 
+  drawChiefName()
   drawSelection()
+}
+
+/** The coordinator's name under it while it is out on the floor, so you can tell who it is. */
+function drawChiefName() {
+  if (!chief || !layout.coordinator || chiefSeated()) return
+  const s = layout.scale
+  const size = Math.max(9, Math.min(11, Math.round(s * 3)))
+  drawText(layout.coordinator.bot.name, (chief.x + 4) * s, (chief.y + 19) * s, 90, '#e4e8f2', { align: 'center', size, chip: '#2f3a52' })
+}
+
+/** Where a bot is on screen, for clicks, its bubble and the selection frame: [x, y, w, h]. */
+function botBox(bot) {
+  const k = layout.coordinator
+  if (k && k.bot.id === bot.id) {
+    if (chief && !chiefSeated()) return loft() ? [chief.x - 3, chief.y + 1, 14, 15] : [chief.x - 2, chief.y + 4, 12, 12]
+    return loft() ? [k.room.seat.x - 1, k.room.seat.y - 1, 14, 14] : [k.seat.x + 4, k.seat.y - 2, 12, 12]
+  }
+  const room = layout.rooms.find((r) => r.head?.bot.id === bot.id)
+  if (!room) return null
+  const { x, y } = room.head
+  return loft() ? [x + 1, y - 13, 14, 18] : [x, y + 3, 12, 16]
 }
 
 /** The frame around the selected seat, and the speech bubbles. */
 function drawSelection() {
   const pickSeat = selected && seatOf(selected)
-  if (pickSeat) {
+  const pickBot = selected && botOf(selected)
+  const frame = pickSeat ? seatBoxOf(pickSeat) : pickBot ? botBox(pickBot) : null
+  if (frame) {
     artTransform()
-    const [x, y, w, h] = seatBoxOf(pickSeat)
+    const [x, y, w, h] = frame
     ctx.strokeStyle = '#ffffff'
     ctx.lineWidth = 0.5
     ctx.strokeRect(x + 0.25, y + 0.25, w - 0.5, h - 0.5)
@@ -1572,8 +1836,19 @@ function drawSelection() {
     const b = bubbles.get(seat.key)
     if (seat.key !== selected && b && b.until > now) drawBubble(bubbleAnchor(seat.key), b.text, b.kind)
   }
+  for (const bot of shownBots) {
+    const key = botKey(bot)
+    const anchor = key !== selected && bubbleAnchor(key)
+    if (!anchor) continue
+    const b = bubbles.get(key)
+    // out on its round it says what it is checking; else a bubble when it finished or needs you
+    const k = layout.coordinator
+    if (k && k.bot.id === bot.id && chief?.say) drawBubble(anchor, chief.say)
+    else if (b && b.until > now) drawBubble(anchor, b.text, b.kind)
+  }
   const anchor = selected && bubbleAnchor(selected)
-  if (anchor) drawBubble(anchor, sayingOf(selected), !visitors.has(selected) && seatOf(selected)?.staff?.state === 'waiting' ? 'waiting' : 'speech')
+  const waiting = pickBot ? pickBot.state === 'waiting' : !visitors.has(selected) && seatOf(selected)?.staff?.state === 'waiting'
+  if (anchor) drawBubble(anchor, sayingOf(selected), waiting ? 'waiting' : 'speech')
 }
 
 // ---- side text ---------------------------------------------------------------------------------
@@ -1585,6 +1860,8 @@ function el(tag, className, text) {
   return node
 }
 
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+
 function renderStats() {
   let busy = 0
   let specialists = 0
@@ -1594,8 +1871,11 @@ function renderStats() {
     if (u.staff.state === 'waiting' || u.staff.state === 'blocked') needYou++
     specialists += activeSpecialists(u.staff).length
   }
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
-  const parts = [plural(layout.teamCount ?? layout.rooms.length, 'team'), `${layout.seats.length} staff`, `${busy} busy`]
+  // a bot that waits for you, or is stuck, needs you like anyone
+  for (const bot of shownBots) if (bot.state === 'waiting' || bot.state === 'blocked') needYou++
+  const parts = [plural(layout.teamCount ?? layout.rooms.length, 'team')]
+  if (shownBots.length) parts.push(plural(shownBots.length, 'bot'))
+  parts.push(`${layout.seats.length} staff`, `${busy} busy`)
   if (specialists) parts.push(plural(specialists, 'specialist'))
   if (needYou) parts.push(`${needYou} need you`)
   const text = parts.join(' · ')
@@ -1645,8 +1925,55 @@ function seatFacts(seat) {
   return facts
 }
 
+/** "Bot", or "Coordinator" for the one picked in the header. */
+const botRole = (bot) => (bot.id === coordinatorId() ? 'Coordinator' : 'Bot')
+
+/** A bot's state and how long it has been in it. */
+function botStateFor(bot) {
+  const label = stateLabel(bot.state)
+  const how = bot.state === 'asleep' || bot.state === 'watching' ? '' : since(bot.since)
+  return how ? `${label} for ${how}` : label
+}
+
+/** Who made a desk, when a bot runs it or an automation made it. */
+function deskOrigin(d) {
+  const out = []
+  if (d.bot) out.push(`Run by ${(snapshot?.bots ?? []).find((b) => b.id === d.bot)?.name ?? 'a bot'}`)
+  if (d.automation) out.push(d.automation.name ? `Made by the ${d.automation.name} automation` : 'Made by an automation')
+  return out
+}
+
+const BOT_DESK_ROWS = 8
+
+/**
+ * A bot in the detail box: who it is, what it does and the desks it runs. Orca cannot bring a
+ * bot's home folder to the front from the CLI yet, so a bot has no Open in Orca button.
+ */
+function botDetail(bot) {
+  const lines = [el('div', '', bot.name), el('div', 'row', botRole(bot))]
+  if (bot.host) lines.push(el('div', 'row', `on ${bot.host}`))
+  lines.push(el('div', 'row', botStateFor(bot)))
+  if (bot.task) lines.push(el('div', 'row', bot.task))
+  if (!bot.homeId) lines.push(el('div', 'row', "Its home isn't showing in Orca right now"))
+  if (bot.desks.length) {
+    lines.push(el('div', '', `Running ${plural(bot.desks.length, 'desk')}`))
+    for (const d of bot.desks.slice(0, BOT_DESK_ROWS)) {
+      const state = d.staff[0] ? stateLabel(d.staff[0].state) : 'asleep'
+      lines.push(el('div', 'row', `${d.staff[0]?.label || d.label} · ${d.repo} · ${state}`))
+    }
+    if (bot.desks.length > BOT_DESK_ROWS) lines.push(el('div', 'row', `and ${bot.desks.length - BOT_DESK_ROWS} more`))
+  }
+  return lines
+}
+
 function renderDetail() {
   const box = document.getElementById('detail')
+  const bot = selected && botOf(selected)
+  if (bot) {
+    box.replaceChildren(...botDetail(bot))
+    box.hidden = false
+    return
+  }
   const seat = selected && seatOf(selected)
   if (!seat) {
     box.hidden = true
@@ -1656,6 +1983,7 @@ function renderDetail() {
   const lines = [el('div', '', d.name)]
   if (d.host) lines.push(el('div', 'row', `on ${d.host}`))
   for (const fact of seatFacts(seat)) lines.push(el('div', 'row', fact))
+  for (const fact of deskOrigin(d)) lines.push(el('div', 'row', fact))
   if (staff.id) {
     const state = opening?.key === seat.key ? opening : null
     const button = el('button', 'open', state?.busy ? 'Opening...' : 'Open in Orca')
@@ -1698,18 +2026,34 @@ function noteChanges() {
   }
   const seated = new Set(layout.seats.map((s) => s.key))
   for (const key of doneAt.keys()) if (!seated.has(key)) doneAt.delete(key)
+  // a bot speaks up the same way when it finishes or needs you
+  for (const bot of shownBots) {
+    const key = botKey(bot)
+    const prev = lastState.get(key)
+    if (primed && prev && prev !== bot.state) {
+      const text = bot.state === 'done' ? bot.said ?? 'Done!' : bot.state === 'waiting' ? 'Need you!' : bot.state === 'blocked' ? 'Stuck!' : null
+      if (text) bubbles.set(key, { text, until: now + BUBBLE_MS, kind: bot.state === 'waiting' ? 'waiting' : 'speech' })
+    }
+    lastState.set(key, bot.state)
+  }
+  // a bot that left the floor takes its last state and bubble with it
+  const onFloor = new Set(shownBots.map(botKey))
+  for (const map of [lastState, bubbles]) for (const key of map.keys()) if (key.startsWith(BOT_KEY) && !onFloor.has(key)) map.delete(key)
   primed = true
 }
 
 function apply(next) {
   snapshot = next
+  shownBots = botsOnFloor(next)
+  botPalette = botColors(shownBots)
+  renderCoordinator()
   // Establish the new layout before updating the sidebar text. The final resize below measures
   // the office after those DOM changes, so a snapshot cannot cause one paint at the old height and
   // another after #stats or #message changes the flex layout.
   layout = fitLayout()
   renderStats()
   renderDetail()
-  if (layout.seats.length === 0) {
+  if (layout.seats.length === 0 && shownBots.length === 0) {
     showMessage(next.error ? `Could not read the agents: ${next.error}` : 'The office is empty. Start an agent and it gets a desk.')
   } else showMessage(null)
   resize(false)
@@ -1739,6 +2083,8 @@ function seatOf(key) {
 
 /** What someone says when clicked: an agent's line, or the job a specialist was called in for. */
 function sayingOf(key) {
+  const bot = botOf(key)
+  if (bot) return bot.line
   const v = visitors.get(key)
   if (v) return v.spec.task ?? `${v.spec.role ?? 'specialist'}, on it`
   const staff = seatOf(key)?.staff
@@ -1763,6 +2109,10 @@ function whoAt(ax, ay) {
     const w = walkers.get(seat.key)
     // a lounger lies across the sofa, so give the box room on both sides
     if (w) people.push({ key: seat.key, box: [w.x - 3, w.y - 2, 14, 18], base: w.y + 16 })
+  }
+  for (const bot of shownBots) {
+    const box = botBox(bot)
+    if (box) people.push({ key: botKey(bot), box, base: box[1] + box[3] })
   }
   // the one drawn last (nearest the bottom) is on top
   const person = people.sort((a, b) => b.base - a.base).find((m) => inBox(m.box))
@@ -1789,11 +2139,19 @@ function cardAt(ax, ay) {
     if (host) lines.push(`helping ${nameplate(host)}`)
     return { key, title: spec.role ?? 'specialist', lines }
   }
+  const bot = key && botOf(key)
+  if (bot) {
+    const lines = [`${botRole(bot)} · ${botStateFor(bot)}`]
+    if (bot.desks.length) lines.push(`Running ${plural(bot.desks.length, 'desk')}`)
+    if (bot.host) lines.push(`On ${bot.host}`)
+    lines.push(bot.line)
+    return { key, title: bot.name, lines }
+  }
   const seat = key && seatOf(key)
   if (seat) {
     const { desk: d, staff } = seat
-    const where = [seat.room?.name, d.branch || d.name, d.host && `on ${d.host}`].filter(Boolean).join(' · ')
-    const lines = [where, ...seatFacts(seat)]
+    const where = [seat.room?.bot ? d.repo : seat.room?.name, d.branch || d.name, d.host && `on ${d.host}`].filter(Boolean).join(' · ')
+    const lines = [where, ...seatFacts(seat), ...deskOrigin(d)]
     if (staff.said) lines.push(`"${staff.said}"`)
     return { key, title: staff.name || staff.label || d.name, lines }
   }
@@ -1874,6 +2232,7 @@ function setLayout(next) {
   visitors.clear()
   assigned.clear()
   palu = null
+  chief = null
   scenePrimed = false
   selected = null
   opening = null
@@ -1933,6 +2292,44 @@ function renderThemes() {
   }
 }
 
+// The coordinator control: shown only when Orca names bots, listing them by name.
+const coordinatorBox = document.getElementById('coordinator')
+const coordinatorSelect = coordinatorBox?.querySelector('select')
+let coordinatorSig = null
+
+function renderCoordinator() {
+  if (!coordinatorBox || !coordinatorSelect) return
+  const bots = snapshot?.bots ?? []
+  coordinatorBox.hidden = bots.length === 0
+  const label = document.getElementById('coordinator-label')
+  if (label) label.hidden = bots.length === 0
+  const options = [['', 'None'], ...bots.map((b) => [b.id, b.host ? `${b.name} on ${b.host}` : b.name])]
+  const sig = JSON.stringify(options)
+  if (sig !== coordinatorSig) {
+    coordinatorSig = sig
+    coordinatorSelect.replaceChildren(
+      ...options.map(([value, text]) => {
+        const option = el('option', '', text)
+        option.value = value
+        return option
+      })
+    )
+  }
+  coordinatorSelect.value = coordinatorId() ?? ''
+}
+
+coordinatorSelect?.addEventListener('change', () => {
+  coordinatorPick = coordinatorSelect.value || null
+  try {
+    if (coordinatorPick) localStorage.setItem(COORD_KEY, coordinatorPick)
+    else localStorage.removeItem(COORD_KEY)
+  } catch {
+    // kept for this session only
+  }
+  chief = null
+  if (snapshot) apply(snapshot)
+})
+
 for (const button of document.querySelectorAll('#themes button')) button.addEventListener('click', () => setLayout(button.dataset.layout))
 document.querySelector('#dark-toggle button')?.addEventListener('click', () => setDark(!dark))
 document.querySelector('#desk-stay button')?.addEventListener('click', () => setDeskStay(nextDeskStay(deskStay)))
@@ -1956,6 +2353,7 @@ setInterval(() => {
   stepWalkers()
   stepVisitors()
   stepPalu()
+  stepChief()
   if (snapshot) scenePrimed = true
   draw()
   refreshCard()

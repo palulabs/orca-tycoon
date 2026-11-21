@@ -19,7 +19,9 @@ import {
   staysAtDesk,
   visitorWalk,
   walkGrid,
-  walkerShown
+  walkerShown,
+  coordinatorSeated,
+  coordinatorWalk
 } from './walking.js'
 
 type Box = [number, number, number, number]
@@ -585,4 +587,64 @@ test('an agent waiting behind others to get up, whose desk moves meanwhile, sets
     if (w.mode === 'away') break
   }
   assert.equal(w?.mode, 'away')
+})
+
+
+// ---- the coordinator's round ---------------------------------------------------------------------
+
+const chiefPlan = (state: string, dx = 0) => ({
+  bot: { id: 'chief', state },
+  home: { x: 100 + dx, y: 100 },
+  entrance: { x: 120 + dx, y: 60 },
+  stops: [{ at: { x: 20, y: 20 }, say: 'Checking on Triage' }]
+})
+const straight = (from: { x: number; y: number }, to: { x: number; y: number }) => [{ x: to.x, y: to.y }]
+const walkChief = (chief: any, plan: any, frames: number, round = () => plan.stops) => {
+  for (let i = 0; i < frames; i++) chief = coordinatorWalk(chief, plan, { round, route: straight, speed: 4, rest: 3, dwell: 2 })
+  return chief
+}
+
+test('the coordinator rests at its desk, walks its round with a word at each stop, and comes back', () => {
+  const plan = chiefPlan('working')
+  let chief = walkChief(null, plan, 1)
+  assert.ok(coordinatorSeated(chief, plan), 'it starts at its desk')
+  assert.deepEqual(chief.queue, [], 'and rests there before its first round')
+  let said = null
+  for (let i = 0; i < 200 && !said; i++) {
+    chief = walkChief(chief, plan, 1)
+    said = chief.say
+  }
+  assert.equal(said, 'Checking on Triage')
+  chief = walkChief(chief, plan, 200)
+  assert.ok(coordinatorSeated(chief, plan) || chief.queue.length > 0, 'it went home and set off again')
+})
+
+test('waiting, it goes to its way in and stays; asleep, it goes back to its desk', () => {
+  let chief = walkChief(null, chiefPlan('waiting'), 1)
+  const waiting = chiefPlan('waiting')
+  chief = walkChief(chief, waiting, 100)
+  assert.deepEqual([chief.x, chief.y], [waiting.entrance.x, waiting.entrance.y])
+  assert.equal(chief.dwell, Infinity)
+  const asleep = { ...waiting, bot: { id: 'chief', state: 'asleep' } }
+  chief = walkChief(chief, asleep, 100)
+  assert.ok(coordinatorSeated(chief, asleep))
+})
+
+test('when the office is laid out again and its room moves, the coordinator moves with it', () => {
+  // asleep at its desk: it sits at the new desk, not standing at the old spot
+  let chief = walkChief(null, chiefPlan('asleep'), 3)
+  const moved = chiefPlan('asleep', 50)
+  chief = walkChief(chief, moved, 1)
+  assert.ok(coordinatorSeated(chief, moved), 'it was left standing where its desk used to be')
+  // waiting at its way in: it waits at the new one
+  chief = walkChief(chief, chiefPlan('waiting', 50), 100)
+  const movedAgain = chiefPlan('waiting', -30)
+  chief = walkChief(chief, movedAgain, 1)
+  assert.deepEqual([chief.x, chief.y], [movedAgain.entrance.x, movedAgain.entrance.y])
+  // a new layout with the same places keeps its round going
+  const plan = chiefPlan('working')
+  chief = walkChief(chief, plan, 40)
+  const queue = chief.queue.length
+  chief = walkChief(chief, { ...plan, bot: { ...plan.bot } }, 1)
+  assert.ok(chief.queue.length >= queue - 1, 'a poll that moved nothing started its round over')
 })

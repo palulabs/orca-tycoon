@@ -559,3 +559,96 @@ export function visitorWalk(v, stool, routeIn, routeOut, speed) {
   if (v.mode === 'in') v.mode = 'seated'
   return v.mode !== 'out'
 }
+
+
+// ---- the coordinator's round ---------------------------------------------------------------------
+// The coordinator bot walks a round while it works or keeps an eye on its desks, waits at its way
+// in when it needs you, and sits at its desk otherwise. A poll or a resize lays the office out
+// again, so the room and its desk can move: the walk keeps the plan it was made from, and when the
+// layout hands it another one it starts over from there, at its new desk or its new way in.
+
+/** What the coordinator does in this state: walks its round, waits at its way in, or sits. */
+export function coordinatorMode(state) {
+  if (state === 'waiting' || state === 'blocked') return 'door'
+  return state === 'working' || state === 'monitoring' || state === 'watching' ? 'round' : 'home'
+}
+
+const near = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 1
+/** Where a coordinator plan puts things: a new layout with the same places is the same plan. */
+const planKey = (plan) => JSON.stringify([plan.home, plan.entrance, (plan.stops ?? []).map((s) => s.at)])
+
+/**
+ * One frame of the coordinator. `plan` is the layout's `{ bot, home, entrance }`; `round()` the
+ * stops of a round, each `{ at, say }`; `route(from, to)` the way there, or null while it is
+ * planned. Returns the walk: `{ x, y, path, queue, mode, dwell, say, rest, plan }`.
+ */
+export function coordinatorWalk(chief, plan, { round, route, speed, rest = 64, dwell = 40 }) {
+  const mode = coordinatorMode(plan.bot.state)
+  const leg = (m) => {
+    if (m === 'door') return [{ at: plan.entrance, place: 'entrance', dwell: Infinity }]
+    if (m === 'home') return [{ at: plan.home, place: 'home' }]
+    const stops = round()
+    if (!stops.length) return []
+    return [{ at: plan.entrance, place: 'entrance' }, ...stops.map((s) => ({ ...s, dwell })), { at: plan.entrance, place: 'entrance' }, { at: plan.home, place: 'home' }]
+  }
+  if (!chief || chief.id !== plan.bot.id) {
+    // it starts at its desk; a round starts after a little rest there
+    return { id: plan.bot.id, ...plan.home, path: [], queue: mode === 'round' ? [] : leg(mode), mode, dwell: 0, say: null, rest, left: false, plan }
+  }
+  if (chief.plan !== plan && planKey(chief.plan) === planKey(plan)) chief.plan = plan
+  if (chief.plan !== plan) {
+    // laid out again and its room or the floor moved: sitting at its desk or standing at its way
+    // in, it is at the new one now; wherever it was going, it sets off again from where it stands
+    const old = chief.plan
+    if (!chief.path.length && near(chief, old.home)) Object.assign(chief, plan.home)
+    else if (!chief.path.length && near(chief, old.entrance)) Object.assign(chief, plan.entrance)
+    Object.assign(chief, { plan, path: [], dwell: 0, say: null, mode: null })
+  }
+  if (chief.mode !== mode) {
+    chief.mode = mode
+    chief.queue = leg(mode)
+    chief.path = []
+    chief.dwell = 0
+    chief.say = null
+  }
+  if (chief.dwell > 0) {
+    chief.dwell--
+    if (chief.dwell <= 0) {
+      chief.say = null
+      chief.queue.shift()
+    }
+    return chief
+  }
+  const next = chief.queue[0]
+  if (!next) {
+    if (mode === 'round' && --chief.rest <= 0) {
+      chief.queue = leg('round')
+      chief.rest = rest
+    }
+    return chief
+  }
+  if (!chief.path.length && !near(chief, next.at)) {
+    const path = route(chief, next.at)
+    if (!path) return chief
+    chief.path = path
+  }
+  const step = chief.path[0]
+  if (step) {
+    const dx = step.x - chief.x
+    chief.left = dx < -0.5 ? true : dx > 0.5 ? false : chief.left
+    if (stepToward(chief, step, speed)) chief.path.shift()
+    return chief
+  }
+  // there: a word and a moment at a stop, then on
+  Object.assign(chief, next.at)
+  chief.say = next.say ?? null
+  chief.dwell = next.dwell ?? 0
+  if (!chief.dwell) chief.queue.shift()
+  return chief
+}
+
+/** Whether the coordinator sits at its desk: at home with nowhere to go. */
+export function coordinatorSeated(chief, plan) {
+  if (!plan) return false
+  return !chief || (!chief.path.length && near(chief, plan.home))
+}
