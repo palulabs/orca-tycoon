@@ -63,11 +63,17 @@ on your `PATH`.
 - **Bots have rooms of their own.** An Orca bot, the assistant people ask from Slack, Linear or
   GitHub, comes in as its mascot: a round little sea creature with a headset, in a colour no other
   bot on the floor has. Every desk a bot runs leaves its project's team and sits at the bot's own
-  island, in a room named after the bot. Bot rooms come first on the floor. Each desk keeps its
-  ticket nameplate and gets a small tag under it for the project it works in. The bot stands at
-  the head of its island: on a little navy podium in the loft, behind a wooden lectern in Brick.
-  A bot comes in while its own chat is open in Orca or one of its desks has an agent at work, and
-  a bot with no desks yet stands alone in its room.
+  island, in a room named after the bot. A bot runs whatever sits under it in Orca's sidebar: the
+  workspaces it made, their children and theirs, and a workspace nested under it from a paired
+  Orca server too. Bot rooms come first on the floor. Each desk keeps its
+  ticket nameplate and gets a small tag under it for the project it works in. When two projects
+  in one room share a name, such as three `website`s, the tag adds the folder they live in:
+  `acme/website`. The bot sits at
+  the head of its island like the head of the table: in its chair at the island's end, behind a
+  desk of its own turned toward its staff, its terminal facing it.
+  A bot comes in while its own chat is open in Orca or one of its desks has an agent at work. A
+  bot with no desks on the floor sits at a little desk of its own in the middle of its room, its terminal
+  facing you.
 - **One bot can be the coordinator.** Pick it with the Coordinator control in the header; the
   panel remembers it. In the loft the coordinator gets a room of its own at the right end of the
   hangout, closed off from the lounge by a curtain, with a big desk, the floor map on a stand, two
@@ -90,7 +96,10 @@ that waits for you counts among those who need you.
 
 The Layout control picks the floor plan and the panel remembers it. The separate Appearance
 control toggles Dark for any layout. The office opens in the Loft with Dark off. The ⏱ button sets
-how long an agent that just finished stays at its desk before its break.
+how long an agent that just finished stays at its desk before its break. Hide sleeping, as in
+Orca's sidebar filter, leaves out the desks with no agent, such as a bot's `main` checkouts, and
+the rooms close up; it is off at first and the panel remembers it. Brick only ever seats agents
+at work, so the button shows in the Loft.
 
 - **Loft** shows the office from the front and above, like a doll's house with its front wall
   taken off. It is set up like a real office in an old concrete hall: a double-height window onto
